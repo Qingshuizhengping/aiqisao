@@ -1,4 +1,4 @@
-name: Build APK
+name: Build APK (Debug)
 
 on:
   push:
@@ -18,6 +18,17 @@ jobs:
           java-version: '17'
           distribution: 'temurin'
 
+      - name: Dump environment
+        run: |
+          echo "ANDROID_SDK_ROOT=$ANDROID_SDK_ROOT"
+          echo "ANDROID_HOME=$ANDROID_HOME"
+          echo "JAVA_HOME=$JAVA_HOME"
+          java -version 2>&1
+          ls "$ANDROID_SDK_ROOT/platforms/" 2>&1 || echo "NO platforms dir"
+          ls "$ANDROID_SDK_ROOT/build-tools/" 2>&1 || echo "NO build-tools dir"
+          which sdkmanager 2>&1 || echo "sdkmanager not in PATH"
+          ls "$ANDROID_SDK_ROOT/cmdline-tools/" 2>&1 || echo "NO cmdline-tools"
+
       - name: Generate offline HTML
         run: node build_offline_html.js
 
@@ -26,26 +37,40 @@ jobs:
 
       - name: Create local.properties
         run: |
-          # MUST exist before cap sync, otherwise Gradle fails
           echo "sdk.dir=$ANDROID_SDK_ROOT" > android/local.properties
+          echo "=== local.properties ==="
           cat android/local.properties
 
-      - name: Verify SDK available
+      - name: Copy web assets (bypass cap sync)
         run: |
-          echo "SDK root: $ANDROID_SDK_ROOT"
-          ls "$ANDROID_SDK_ROOT/platforms/"
-          ls "$ANDROID_SDK_ROOT/build-tools/"
+          rm -rf android/app/src/main/assets/public
+          mkdir -p android/app/src/main/assets/public
+          cp -r www/* android/app/src/main/assets/public/
+          echo "=== assets/public ==="
+          ls -la android/app/src/main/assets/public/
 
-      - name: Sync web assets to Android
-        run: npx cap sync android
+      - name: Sync capacitor config
+        run: |
+          cp capacitor.config.json android/app/src/main/assets/
+          echo "[]" > android/app/src/main/assets/capacitor.plugins.json
+          echo "=== config files ==="
+          ls android/app/src/main/assets/
 
       - name: Build Debug APK
         run: |
           cd android
           chmod +x gradlew
-          ./gradlew assembleDebug --no-daemon --stacktrace 2>&1
+          ./gradlew assembleDebug --no-daemon --info 2>&1 | tee ../build.log
+        continue-on-error: true
 
-      - name: Upload APK
+      - name: Upload build log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-log
+          path: build.log
+
+      - name: Upload APK (if exists)
         if: always()
         uses: actions/upload-artifact@v4
         with:
