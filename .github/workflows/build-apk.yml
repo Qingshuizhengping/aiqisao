@@ -32,14 +32,21 @@ jobs:
       - name: Sync web assets to Android
         run: npx cap sync android
 
+      - name: Downgrade compileSdk to 35 (stable API)
+        run: |
+          sed -i 's/compileSdkVersion = 36/compileSdkVersion = 35/' android/variables.gradle
+          sed -i 's/targetSdkVersion = 36/targetSdkVersion = 35/' android/variables.gradle
+          grep 'SdkVersion' android/variables.gradle
+
       - name: Build Debug APK
         run: |
           cd android
           chmod +x gradlew
           ./gradlew assembleDebug --no-daemon --stacktrace
 
-      - name: Find and Upload APK
+      - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
           name: aiqisao-debug
           path: android/app/build/outputs/apk/debug/*.apk
+          if-no-files-found: warn
