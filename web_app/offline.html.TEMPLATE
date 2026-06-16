@@ -1169,11 +1169,16 @@ function showNetworkError() {
 }
 
 function fetchNormalAnswer(text, conv, history) {
+    var controller = new AbortController();
+    var timeoutId = setTimeout(function() { controller.abort(); }, 30000);
+
     return fetch(API_BASE + '/api/query', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ question: text, history: history || [] })
+        body: JSON.stringify({ question: text, history: history || [] }),
+        signal: controller.signal
     }).then(function(resp) {
+        clearTimeout(timeoutId);
         if (!resp.ok) throw new Error('Server error: ' + resp.status);
         return resp.json();
     }).then(function(data) {
@@ -1189,8 +1194,11 @@ function fetchNormalAnswer(text, conv, history) {
         addSystemMessage('查询出错: ' + (data.error || '未知错误'));
         return false;
     }).catch(function(err) {
+        clearTimeout(timeoutId);
         hideTyping();
-        if (!navigator.onLine) {
+        if (err && err.name === 'AbortError') {
+            addQisaoMessage('<p>⏱️ <strong>请求超时</strong></p><p>服务器响应时间过长，请稍后重试。</p>');
+        } else if (!navigator.onLine) {
             showOfflineFallback();
         } else {
             showNetworkError();
@@ -1229,12 +1237,29 @@ function sendMessage() {
 
     showTyping();
 
-    // 尝试流式请求
+    // 安全超时：60秒后强制重置状态
+    var safetyTimeout = setTimeout(function() {
+        if (isProcessing) {
+            hideTyping();
+            removeStreamLoading();
+            addQisaoMessage('<p>⏱️ <strong>请求超时</strong></p><p>服务器响应时间过长，请稍后重试。</p>');
+            isProcessing = false;
+            sendBtn.disabled = false;
+            userInput.focus();
+        }
+    }, 60000);
+
+    // 尝试流式请求（带超时）
+    var streamController = new AbortController();
+    var streamTimeoutId = setTimeout(function() { streamController.abort(); }, 15000);
+
     fetch(API_BASE + '/api/query_stream', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ question: text, history: history })
+        body: JSON.stringify({ question: text, history: history }),
+        signal: streamController.signal
     }).then(function(resp) {
+        clearTimeout(streamTimeoutId);
         if (!resp.ok || !resp.body || !window.ReadableStream) {
             // 降级到普通请求
             return fetchNormalAnswer(text, conv, history);
@@ -1254,6 +1279,17 @@ function sendMessage() {
                     if (!hasStarted) {
                         return fetchNormalAnswer(text, conv, history);
                     }
+                    // 流结束但没收到 done 事件，用已收集的文本作为最终结果
+                    if (!finalHtml && markdownText) {
+                        finalHtml = renderStreamingText(markdownText);
+                        if (bubble) bubble.innerHTML = finalHtml;
+                        conv.messages.push({ role: 'qisao', html: finalHtml });
+                        conv.updatedAt = Date.now();
+                        saveConversations();
+                        setOnlineStatus(true);
+                    }
+                    hideTyping();
+                    removeStreamLoading();
                     return;
                 }
 
@@ -1314,6 +1350,7 @@ function sendMessage() {
 
         return processStream();
     }).catch(function(err) {
+        clearTimeout(streamTimeoutId);
         // 流式失败，尝试普通请求
         return fetchNormalAnswer(text, conv, history).catch(function() {
             hideTyping();
@@ -1324,6 +1361,7 @@ function sendMessage() {
             }
         });
     }).then(function() {
+        clearTimeout(safetyTimeout);
         isProcessing = false;
         sendBtn.disabled = false;
         userInput.focus();
@@ -1342,6 +1380,13 @@ function initApp() {
 }
 
 initApp();
+
+// 暴露函数到全局，供 HTML onclick 调用
+window.sendMessage = sendMessage;
+window.handleKeyDown = handleKeyDown;
+window.quickAsk = quickAsk;
+window.toggleSidebar = toggleSidebar;
+window.newChat = newChat;
 })();
 </script>
 </body>

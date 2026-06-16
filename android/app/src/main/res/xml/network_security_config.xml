@@ -1,13 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <network-security-config>
-    <!-- 允许所有域名的 HTTPS 和 HTTP 明文流量 -->
-    <base-config cleartextTrafficPermitted="true">
+    <!-- 默认禁止明文流量，只允许 HTTPS -->
+    <base-config cleartextTrafficPermitted="false">
         <trust-anchors>
             <certificates src="system" />
         </trust-anchors>
     </base-config>
-    <!-- 特别允许 web-production-b0601.up.railway.app 的明文 -->
-    <domain-config cleartextTrafficPermitted="true">
-        <domain includeSubdomains="true">railway.app</domain>
-    </domain-config>
 </network-security-config>

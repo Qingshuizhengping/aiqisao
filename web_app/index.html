@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>薇之雨 · AI七嫂</title>
+<link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body>
+
+<div class="sidebar-overlay" id="sidebarOverlay" onclick="toggleSidebar()"></div>
+
+<div class="sidebar" id="sidebar">
+    <div class="sidebar-header">
+        <h2>对话记录</h2>
+        <button class="new-chat-btn" onclick="newChat()" title="新对话">✚</button>
+    </div>
+    <div class="sidebar-list" id="sidebarList"></div>
+    <div class="sidebar-footer">薇之雨 · AI七嫂智能问答</div>
+</div>
+
+<div class="main">
+    <div class="header">
+        <button class="menu-btn" id="menuBtn" onclick="toggleSidebar()">☰</button>
+        <div class="header-avatar"><img src="/avatar.png" class="avatar-img"></div>
+        <div class="header-info">
+            <h1>AI七嫂</h1>
+            <p>薇之雨品牌创始人</p>
+        </div>
+        <div class="header-right">
+            <span class="status-dot"></span>
+            <span class="status-text">在线</span>
+        </div>
+    </div>
+
+    <div class="chat-container" id="chatContainer">
+        <div class="welcome-section" id="welcomeSection">
+            <div class="welcome-icon"><img src="/avatar.png" class="welcome-avatar-img"></div>
+            <h2>你好，我是AI七嫂</h2>
+            <p>有什么问题直接问，我知无不言，言无不尽！</p>
+            <div class="welcome-quote">
+                <blockquote>记住啊，美业就是修心，修好了自己的心，客户自然就来了。</blockquote>
+            </div>
+        </div>
+    </div>
+
+    <div class="input-area">
+        <div class="input-wrapper">
+            <div class="quick-buttons">
+                <button class="quick-btn" onclick="quickAsk('调肤原理是什么？')">调肤原理</button>
+                <button class="quick-btn" onclick="quickAsk('产品安全吗？')">产品安全</button>
+                <button class="quick-btn" onclick="quickAsk('多久见效？')">多久见效</button>
+                <button class="quick-btn" onclick="quickAsk('批发体系是什么？')">批发体系</button>
+                <button class="quick-btn" onclick="quickAsk('门店如何拓客？')">门店拓客</button>
+            </div>
+            <div class="input-box">
+                <textarea id="userInput" placeholder="输入消息…" rows="1" onkeydown="handleKeyDown(event)"></textarea>
+                <button class="send-btn" id="sendBtn" onclick="sendMessage()">↑</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script src="/static/js/app.js"></script>
+</body>
+</html>

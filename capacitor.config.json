@@ -1,8 +1,9 @@
 {
   "appId": "com.weizhiyu.aiqisao",
-  "appName": "薇之雨·AI七嫂",
+  "appName": "AI七嫂",
   "webDir": "www",
   "server": {
+    "url": "https://web-production-b0601.up.railway.app/",
     "androidScheme": "https",
     "cleartext": true,
     "allowNavigation": ["web-production-b0601.up.railway.app"]
