@@ -18,35 +18,26 @@ jobs:
           java-version: '17'
           distribution: 'temurin'
 
-      - name: Setup Android SDK
-        run: |
-          echo "ANDROID_HOME=$ANDROID_SDK_ROOT" >> $GITHUB_ENV
-          echo "SDK at $ANDROID_SDK_ROOT"
-          ls "$ANDROID_SDK_ROOT/platforms/"
-          ls "$ANDROID_SDK_ROOT/build-tools/"
-          # Install API 34 if not present
-          yes | "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" "platforms;android-34" "build-tools;34.0.0" 2>&1 | tail -5
-          ls "$ANDROID_SDK_ROOT/platforms/"
-          ls "$ANDROID_SDK_ROOT/build-tools/"
-
-      - name: Create local.properties
-        run: echo "sdk.dir=$ANDROID_SDK_ROOT" > android/local.properties
-
       - name: Generate offline HTML
         run: node build_offline_html.js
 
       - name: Install dependencies
         run: npm install
 
-      - name: Sync to Android (resets variables.gradle to 36!)
-        run: npx cap sync android
-
-      - name: Patch to API 34 (AFTER sync!)
+      - name: Create local.properties
         run: |
-          sed -i 's/compileSdkVersion = 36/compileSdkVersion = 34/' android/variables.gradle
-          sed -i 's/targetSdkVersion = 36/targetSdkVersion = 34/' android/variables.gradle
-          echo "Patched variables.gradle:"
-          grep -E 'compileSdkVersion|targetSdkVersion' android/variables.gradle
+          # MUST exist before cap sync, otherwise Gradle fails
+          echo "sdk.dir=$ANDROID_SDK_ROOT" > android/local.properties
+          cat android/local.properties
+
+      - name: Verify SDK available
+        run: |
+          echo "SDK root: $ANDROID_SDK_ROOT"
+          ls "$ANDROID_SDK_ROOT/platforms/"
+          ls "$ANDROID_SDK_ROOT/build-tools/"
+
+      - name: Sync web assets to Android
+        run: npx cap sync android
 
       - name: Build Debug APK
         run: |
