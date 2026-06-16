@@ -7,9 +7,7 @@ on:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
-    env:
-      ANDROID_HOME: /usr/local/lib/android/sdk
+    runs-on: macos-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -20,33 +18,40 @@ jobs:
           java-version: '17'
           distribution: 'temurin'
 
+      - name: Setup Android SDK
+        run: |
+          SDK_DIR=$HOME/android-sdk
+          mkdir -p $SDK_DIR/cmdline-tools
+          curl -sLo cmdline-tools.zip https://dl.google.com/android/repository/commandlinetools-mac-11076708_latest.zip
+          unzip -q cmdline-tools.zip -d $SDK_DIR/cmdline-tools
+          mv $SDK_DIR/cmdline-tools/cmdline-tools $SDK_DIR/cmdline-tools/latest
+          echo "ANDROID_HOME=$SDK_DIR" >> $GITHUB_ENV
+          echo "sdk.dir=$SDK_DIR" >> android/local.properties
+          yes | $SDK_DIR/cmdline-tools/latest/bin/sdkmanager --licenses > /dev/null 2>&1
+          $SDK_DIR/cmdline-tools/latest/bin/sdkmanager "platforms;android-35" "build-tools;35.0.0" "platform-tools" 2>&1 | tail -3
+          echo "SDK installed"
+
       - name: Generate offline HTML
         run: node build_offline_html.js
 
       - name: Install dependencies
         run: npm install
 
-      - name: Create local.properties
-        run: echo "sdk.dir=$ANDROID_HOME" > android/local.properties
-
-      - name: Sync web assets to Android
-        run: npx cap sync android
-
-      - name: Downgrade compileSdk to 35 (stable API)
+      - name: Sync and patch
         run: |
-          sed -i 's/compileSdkVersion = 36/compileSdkVersion = 35/' android/variables.gradle
-          sed -i 's/targetSdkVersion = 36/targetSdkVersion = 35/' android/variables.gradle
-          grep 'SdkVersion' android/variables.gradle
+          npx cap sync android
+          # cap sync resets to 36; patch to 35 which we actually installed
+          sed -i '' 's/compileSdkVersion = 36/compileSdkVersion = 35/' android/variables.gradle
+          sed -i '' 's/targetSdkVersion = 36/targetSdkVersion = 35/' android/variables.gradle
 
       - name: Build Debug APK
         run: |
           cd android
           chmod +x gradlew
-          ./gradlew assembleDebug --no-daemon --stacktrace
+          ./gradlew assembleDebug --no-daemon
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
           name: aiqisao-debug
           path: android/app/build/outputs/apk/debug/*.apk
-          if-no-files-found: warn
