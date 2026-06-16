@@ -8,6 +8,8 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+    env:
+      ANDROID_HOME: /usr/local/lib/android/sdk
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -24,17 +26,9 @@ jobs:
       - name: Install dependencies
         run: npm install
 
-      - name: Create local.properties (MUST be before cap sync!)
+      - name: Create local.properties
         run: |
-          echo "sdk.dir=$ANDROID_SDK_ROOT" > android/local.properties
-          echo "=== created local.properties ==="
-          cat android/local.properties
-
-      - name: Verify SDK
-        run: |
-          echo "SDK at: $ANDROID_SDK_ROOT"
-          ls "$ANDROID_SDK_ROOT/platforms/" 2>/dev/null || echo "no platforms"
-          ls "$ANDROID_SDK_ROOT/build-tools/" 2>/dev/null || echo "no build-tools"
+          echo "sdk.dir=$ANDROID_HOME" > android/local.properties
 
       - name: Sync web assets to Android
         run: npx cap sync android
@@ -44,10 +38,6 @@ jobs:
           cd android
           chmod +x gradlew
           ./gradlew assembleDebug --no-daemon --stacktrace 2>&1
-
-      - name: Find APK
-        if: always()
-        run: find android -name "*.apk" -type f 2>/dev/null || echo "no APK found"
 
       - name: Upload APK
         if: always()
