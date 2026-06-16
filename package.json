@@ -1,0 +1,19 @@
+{
+  "name": "weizhiyu-ai-qisao",
+  "version": "1.0.0",
+  "description": "薇之雨 · AI七嫂 - 智能问答 APK",
+  "main": "www/index.html",
+  "scripts": {
+    "build": "echo 'Web assets ready'",
+    "cap:add": "npx cap add android",
+    "cap:sync": "npx cap sync android",
+    "cap:open": "npx cap open android"
+  },
+  "author": "薇之雨",
+  "license": "UNLICENSED",
+  "dependencies": {
+    "@capacitor/android": "^8.4.0",
+    "@capacitor/cli": "^8.4.0",
+    "@capacitor/core": "^8.4.0"
+  }
+}

@@ -1,0 +1,1348 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>薇之雨 · AI七嫂</title>
+<style>
+/* ===== AI七嫂 - 薇之雨品牌智能问答系统（离线版） ===== */
+* { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+
+:root {
+    --ios-green: #34C759;
+    --ios-green-dark: #2DB84D;
+    --ios-green-light: rgba(52,199,89,0.08);
+    --ios-bg: #F2F2F7;
+    --ios-surface: #FFFFFF;
+    --ios-separator: rgba(60,60,67,0.1);
+    --ios-label: #1C1C1E;
+    --ios-secondary: #3C3C43;
+    --ios-tertiary: rgba(60,60,67,0.3);
+    --ios-blue: #007AFF;
+    --ios-red: #FF3B30;
+    --ios-orange: #FF9500;
+    --sidebar-width: 280px;
+    --shadow-sm: 0 1px 3px rgba(0,0,0,0.06), 0 1px 2px rgba(0,0,0,0.04);
+    --shadow-md: 0 4px 12px rgba(0,0,0,0.08), 0 1px 3px rgba(0,0,0,0.05);
+    --shadow-lg: 0 8px 30px rgba(0,0,0,0.1), 0 2px 6px rgba(0,0,0,0.04);
+    --shadow-green: 0 4px 20px rgba(52,199,89,0.2), 0 2px 6px rgba(52,199,89,0.1);
+}
+
+body {
+    font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'SF Pro Text', 'Helvetica Neue', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+    background: var(--ios-bg);
+    color: var(--ios-label);
+    height: 100vh;
+    height: 100dvh;
+    display: flex;
+    overflow: hidden;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+}
+
+/* ===== SIDEBAR ===== */
+.sidebar {
+    width: var(--sidebar-width);
+    background: rgba(255,255,255,0.82);
+    backdrop-filter: blur(40px) saturate(180%);
+    -webkit-backdrop-filter: blur(40px) saturate(180%);
+    border-right: 0.5px solid var(--ios-separator);
+    display: flex;
+    flex-direction: column;
+    flex-shrink: 0;
+    transition: transform 0.35s cubic-bezier(0.32, 0.72, 0, 1);
+    z-index: 100;
+}
+
+.sidebar-header {
+    padding: 20px 16px 16px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    border-bottom: 0.5px solid var(--ios-separator);
+}
+
+.sidebar-header h2 {
+    font-size: 17px;
+    font-weight: 700;
+    flex: 1;
+    letter-spacing: -0.2px;
+}
+
+.new-chat-btn {
+    width: 34px; height: 34px;
+    background: var(--ios-green);
+    border: none;
+    border-radius: 50%;
+    color: #fff;
+    font-size: 18px;
+    cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+    transition: all 0.2s cubic-bezier(0.32, 0.72, 0, 1);
+    box-shadow: 0 2px 8px rgba(52,199,89,0.3);
+}
+
+.new-chat-btn:hover {
+    transform: scale(1.05);
+    box-shadow: 0 3px 12px rgba(52,199,89,0.4);
+}
+
+.new-chat-btn:active {
+    transform: scale(0.92);
+    background: var(--ios-green-dark);
+}
+
+.sidebar-list {
+    flex: 1;
+    overflow-y: auto;
+    padding: 8px;
+    -webkit-overflow-scrolling: touch;
+}
+
+.sidebar-list::-webkit-scrollbar { width: 0; }
+
+.chat-item {
+    display: flex;
+    align-items: center;
+    padding: 11px 12px;
+    border-radius: 12px;
+    cursor: pointer;
+    transition: all 0.2s cubic-bezier(0.32, 0.72, 0, 1);
+    gap: 10px;
+    margin-bottom: 2px;
+    position: relative;
+}
+
+.chat-item:hover {
+    background: rgba(0,0,0,0.03);
+}
+
+.chat-item:active {
+    background: rgba(0,0,0,0.06);
+    transform: scale(0.98);
+}
+
+.chat-item.active {
+    background: rgba(52,199,89,0.08);
+}
+
+.chat-item-icon {
+    width: 34px; height: 34px;
+    background: rgba(0,0,0,0.03);
+    border-radius: 10px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 15px;
+    flex-shrink: 0;
+    transition: all 0.2s;
+}
+
+.chat-item.active .chat-item-icon {
+    background: rgba(52,199,89,0.12);
+}
+
+.chat-item-info {
+    flex: 1;
+    min-width: 0;
+}
+
+.chat-item-title {
+    font-size: 14px;
+    font-weight: 500;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    letter-spacing: -0.1px;
+}
+
+.chat-item-date {
+    font-size: 11px;
+    color: var(--ios-tertiary);
+    margin-top: 2px;
+    font-weight: 400;
+}
+
+.chat-item-delete {
+    width: 28px; height: 28px;
+    background: none;
+    border: none;
+    color: var(--ios-tertiary);
+    font-size: 13px;
+    cursor: pointer;
+    border-radius: 50%;
+    display: flex; align-items: center; justify-content: center;
+    opacity: 0;
+    transition: all 0.2s;
+    flex-shrink: 0;
+}
+
+.chat-item:hover .chat-item-delete {
+    opacity: 1;
+}
+
+.chat-item-delete:active {
+    color: var(--ios-red);
+    background: rgba(255,59,48,0.1);
+}
+
+.sidebar-footer {
+    padding: 14px 16px;
+    border-top: 0.5px solid var(--ios-separator);
+    font-size: 11px;
+    color: var(--ios-tertiary);
+    text-align: center;
+    font-weight: 400;
+    letter-spacing: 0.2px;
+}
+
+/* ===== MAIN ===== */
+.main {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    position: relative;
+    background: var(--ios-bg);
+}
+
+/* ===== HEADER ===== */
+.header {
+    background: rgba(255,255,255,0.72);
+    backdrop-filter: blur(30px) saturate(180%);
+    -webkit-backdrop-filter: blur(30px) saturate(180%);
+    padding: 12px 20px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    border-bottom: 0.5px solid var(--ios-separator);
+    position: relative;
+    z-index: 10;
+}
+
+.menu-btn {
+    width: 34px; height: 34px;
+    background: none;
+    border: none;
+    font-size: 20px;
+    cursor: pointer;
+    border-radius: 10px;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    color: var(--ios-blue);
+    transition: background 0.15s;
+}
+
+.menu-btn:hover { background: rgba(0,0,0,0.04); }
+
+.header-avatar {
+    width: 40px; height: 40px;
+    border-radius: 50%;
+    overflow: hidden;
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    box-shadow: 0 0 0 2px rgba(52,199,89,0.2), var(--shadow-sm);
+}
+
+.header-avatar img, .avatar-img {
+    width: 40px; height: 40px;
+    object-fit: cover;
+    object-position: center 70%;
+    border-radius: 50%;
+    display: block;
+    margin: 0;
+    padding: 0;
+}
+
+.header-info h1 {
+    font-size: 17px;
+    font-weight: 700;
+    letter-spacing: -0.4px;
+}
+
+.header-info p {
+    font-size: 12px;
+    color: var(--ios-tertiary);
+    margin-top: 1px;
+    font-weight: 400;
+}
+
+.header-right {
+    margin-left: auto;
+    display: flex; align-items: center; gap: 6px;
+}
+
+.status-dot {
+    width: 8px; height: 8px;
+    background: var(--ios-green);
+    border-radius: 50%;
+    box-shadow: 0 0 6px rgba(52,199,89,0.5);
+    animation: statusPulse 2.5s ease-in-out infinite;
+}
+
+@keyframes statusPulse {
+    0%, 100% { box-shadow: 0 0 4px rgba(52,199,89,0.4); }
+    50% { box-shadow: 0 0 10px rgba(52,199,89,0.6); }
+}
+
+.status-text {
+    font-size: 12px;
+    color: var(--ios-green);
+    font-weight: 600;
+    letter-spacing: 0.2px;
+}
+
+/* ===== CHAT AREA ===== */
+.chat-container {
+    flex: 1;
+    overflow-y: auto;
+    padding: 12px 16px 8px;
+    scroll-behavior: smooth;
+    -webkit-overflow-scrolling: touch;
+}
+
+.chat-container::-webkit-scrollbar { width: 0; }
+
+.message {
+    margin-bottom: 4px;
+    animation: msgIn 0.4s cubic-bezier(0.32, 0.72, 0, 1);
+}
+
+@keyframes msgIn {
+    from { opacity: 0; transform: translateY(12px) scale(0.96); }
+    to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+.message-user {
+    display: flex;
+    justify-content: flex-end;
+    margin-bottom: 8px;
+}
+
+.message-user .bubble {
+    background: linear-gradient(135deg, #34C759 0%, #2DB84D 100%);
+    color: #fff;
+    padding: 10px 16px;
+    border-radius: 20px 20px 5px 20px;
+    max-width: 70%;
+    font-size: 16px;
+    line-height: 1.5;
+    font-weight: 400;
+    letter-spacing: -0.1px;
+    box-shadow: 0 2px 8px rgba(52,199,89,0.25), 0 1px 2px rgba(0,0,0,0.06);
+}
+
+.message-qisao {
+    display: flex;
+    gap: 10px;
+    margin-bottom: 8px;
+    align-items: flex-start;
+}
+
+.qisao-avatar {
+    width: 34px; height: 34px;
+    border-radius: 50%;
+    overflow: hidden;
+    flex-shrink: 0;
+    margin-top: 2px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    box-shadow: 0 0 0 1.5px rgba(52,199,89,0.15);
+}
+
+.qisao-avatar img {
+    width: 34px; height: 34px;
+    object-fit: cover;
+    object-position: center 70%;
+    border-radius: 50%;
+    display: block;
+    margin: 0;
+    padding: 0;
+}
+
+.qisao-bubble {
+    background: var(--ios-surface);
+    padding: 12px 16px;
+    border-radius: 20px 20px 20px 5px;
+    max-width: 75%;
+    font-size: 16px;
+    line-height: 1.55;
+    font-weight: 400;
+    letter-spacing: -0.1px;
+    box-shadow: var(--shadow-md);
+    color: var(--ios-label);
+}
+
+.qisao-bubble h2 { font-size: 17px; font-weight: 700; margin-bottom: 8px; letter-spacing: -0.3px; }
+.qisao-bubble h3 { font-size: 16px; font-weight: 600; margin: 14px 0 6px; letter-spacing: -0.2px; }
+.qisao-bubble h4 { font-size: 15px; font-weight: 600; margin: 10px 0 4px; }
+.qisao-bubble p { margin: 6px 0; }
+.qisao-bubble strong { font-weight: 600; color: #1a1a1a; }
+.qisao-bubble em { color: var(--ios-secondary); }
+.qisao-bubble ul, .qisao-bubble ol { margin: 6px 0 6px 20px; }
+.qisao-bubble li { margin: 3px 0; }
+
+.qisao-bubble blockquote {
+    border-left: 3px solid var(--ios-green);
+    margin: 12px 0;
+    padding: 8px 14px;
+    background: var(--ios-green-light);
+    border-radius: 0 10px 10px 0;
+    color: var(--ios-secondary);
+}
+
+.qisao-bubble hr { border: none; height: 0.5px; background: var(--ios-separator); margin: 12px 0; }
+
+.qisao-bubble code {
+    background: rgba(0,0,0,0.05);
+    padding: 2px 7px;
+    border-radius: 5px;
+    font-size: 14px;
+    font-family: 'SF Mono', Menlo, monospace;
+}
+
+.qisao-bubble pre {
+    background: #1e1e1e;
+    color: #e0e0e0;
+    padding: 14px 16px;
+    border-radius: 14px;
+    overflow-x: auto;
+    margin: 10px 0;
+    font-size: 13px;
+    line-height: 1.5;
+    box-shadow: inset 0 1px 3px rgba(0,0,0,0.2);
+}
+
+.qisao-bubble pre code { background: none; color: inherit; padding: 0; }
+
+.qisao-bubble table { width: 100%; border-collapse: collapse; margin: 10px 0; font-size: 14px; }
+.qisao-bubble th { background: rgba(0,0,0,0.03); font-weight: 600; padding: 8px 12px; text-align: left; border-bottom: 1px solid var(--ios-separator); }
+.qisao-bubble td { padding: 8px 12px; border-bottom: 0.5px solid var(--ios-separator); }
+.qisao-bubble a { color: var(--ios-blue); text-decoration: none; }
+
+.message-system {
+    text-align: center;
+    margin: 14px 0;
+}
+
+.message-system .bubble {
+    display: inline-block;
+    background: rgba(0,0,0,0.05);
+    color: var(--ios-secondary);
+    padding: 5px 14px;
+    border-radius: 14px;
+    font-size: 13px;
+    font-weight: 400;
+}
+
+/* Typing indicator */
+.typing-indicator {
+    display: flex;
+    gap: 10px;
+    margin-bottom: 8px;
+    align-items: flex-start;
+    animation: msgIn 0.35s cubic-bezier(0.32, 0.72, 0, 1);
+}
+
+.typing-bubble {
+    background: var(--ios-surface);
+    padding: 12px 18px;
+    border-radius: 20px 20px 20px 5px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    box-shadow: var(--shadow-md);
+}
+
+.typing-label { color: #8E8E93; font-size: 14px; font-weight: 500; letter-spacing: 0.3px; }
+
+.typing-dots { display: flex; gap: 5px; }
+
+.typing-dots span {
+    width: 8px; height: 8px;
+    background: #8E8E93;
+    border-radius: 50%;
+    animation: iosTyping 1.4s infinite ease-in-out;
+}
+
+.typing-dots span:nth-child(1) { animation-delay: 0s; }
+.typing-dots span:nth-child(2) { animation-delay: 0.2s; }
+.typing-dots span:nth-child(3) { animation-delay: 0.4s; }
+
+@keyframes iosTyping {
+    0%, 60%, 100% { transform: scale(0.6); opacity: 0.35; }
+    30% { transform: scale(1); opacity: 1; }
+}
+
+/* Stream loading animation */
+.stream-loading {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 0;
+}
+
+.loading-dot {
+    width: 8px;
+    height: 8px;
+    background: var(--ios-green);
+    border-radius: 50%;
+    animation: loadingPulse 1.4s infinite ease-in-out;
+}
+
+.loading-dot:nth-child(1) { animation-delay: 0s; }
+.loading-dot:nth-child(2) { animation-delay: 0.2s; }
+.loading-dot:nth-child(3) { animation-delay: 0.4s; }
+
+@keyframes loadingPulse {
+    0%, 60%, 100% { 
+        transform: scale(0.6); 
+        opacity: 0.4; 
+    }
+    30% { 
+        transform: scale(1); 
+        opacity: 1; 
+        box-shadow: 0 0 8px rgba(52,199,89,0.4);
+    }
+}
+
+/* ===== INPUT AREA ===== */
+.input-area {
+    background: rgba(255,255,255,0.72);
+    backdrop-filter: blur(30px) saturate(180%);
+    -webkit-backdrop-filter: blur(30px) saturate(180%);
+    border-top: 0.5px solid var(--ios-separator);
+    padding: 10px 16px;
+    padding-bottom: calc(10px + env(safe-area-inset-bottom, 0px));
+}
+
+.input-wrapper {
+    max-width: 600px;
+    margin: 0 auto;
+}
+
+.quick-buttons {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 10px;
+    flex-wrap: wrap;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+}
+
+.quick-buttons::-webkit-scrollbar { display: none; }
+
+.quick-btn {
+    background: var(--ios-green-light);
+    border: 1px solid rgba(52,199,89,0.12);
+    color: var(--ios-green-dark);
+    padding: 7px 16px;
+    border-radius: 18px;
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.2s cubic-bezier(0.32, 0.72, 0, 1);
+    font-family: inherit;
+    white-space: nowrap;
+    flex-shrink: 0;
+    letter-spacing: 0.1px;
+}
+
+.quick-btn:hover {
+    background: rgba(52,199,89,0.14);
+    border-color: rgba(52,199,89,0.2);
+}
+
+.quick-btn:active {
+    background: rgba(52,199,89,0.2);
+    transform: scale(0.95);
+}
+
+.input-box {
+    display: flex;
+    gap: 10px;
+    align-items: flex-end;
+}
+
+.input-box textarea {
+    flex: 1;
+    border: 1.5px solid rgba(0,0,0,0.08);
+    border-radius: 22px;
+    padding: 10px 18px;
+    font-size: 16px;
+    font-family: inherit;
+    resize: none;
+    outline: none;
+    transition: all 0.25s cubic-bezier(0.32, 0.72, 0, 1);
+    min-height: 42px;
+    max-height: 100px;
+    line-height: 1.4;
+    background: var(--ios-surface);
+    -webkit-appearance: none;
+    box-shadow: inset 0 1px 2px rgba(0,0,0,0.04);
+}
+
+.input-box textarea:focus {
+    border-color: var(--ios-green);
+    box-shadow: inset 0 1px 2px rgba(0,0,0,0.04), 0 0 0 3px rgba(52,199,89,0.12);
+}
+
+.send-btn {
+    width: 42px; height: 42px;
+    background: linear-gradient(135deg, #34C759 0%, #2DB84D 100%);
+    border: none;
+    border-radius: 50%;
+    color: #fff;
+    font-size: 18px;
+    cursor: pointer;
+    transition: all 0.2s cubic-bezier(0.32, 0.72, 0, 1);
+    display: flex; align-items: center; justify-content: center;
+    flex-shrink: 0;
+    box-shadow: 0 2px 10px rgba(52,199,89,0.3);
+}
+
+.send-btn:hover {
+    transform: scale(1.05);
+    box-shadow: 0 4px 14px rgba(52,199,89,0.4);
+}
+
+.send-btn:active { transform: scale(0.9); }
+.send-btn:disabled { opacity: 0.4; cursor: not-allowed; transform: none; box-shadow: none; }
+
+/* ===== WELCOME ===== */
+.welcome-section {
+    max-width: 600px;
+    margin: 0 auto;
+    padding: 56px 24px 36px;
+    text-align: center;
+    animation: welcomeIn 0.6s cubic-bezier(0.32, 0.72, 0, 1);
+}
+
+@keyframes welcomeIn {
+    from { opacity: 0; transform: translateY(20px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+
+.welcome-icon {
+    width: 80px; height: 80px;
+    border-radius: 50%;
+    overflow: hidden;
+    margin: 0 auto 20px;
+    box-shadow: var(--shadow-green), 0 0 0 3px rgba(52,199,89,0.12);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    animation: avatarFloat 3s ease-in-out infinite;
+}
+
+@keyframes avatarFloat {
+    0%, 100% { transform: translateY(0); }
+    50% { transform: translateY(-4px); }
+}
+
+.welcome-icon img, .welcome-avatar-img {
+    width: 80px; height: 80px;
+    object-fit: cover;
+    object-position: center 70%;
+    border-radius: 50%;
+    display: block;
+    margin: 0;
+    padding: 0;
+}
+
+.welcome-section h2 {
+    font-size: 24px;
+    font-weight: 700;
+    letter-spacing: -0.5px;
+    margin-bottom: 8px;
+}
+
+.welcome-section p {
+    color: var(--ios-secondary);
+    font-size: 15px;
+    line-height: 1.5;
+    max-width: 320px;
+    margin: 0 auto;
+    font-weight: 400;
+}
+
+.welcome-quote {
+    margin-top: 24px;
+    padding: 14px 22px;
+    background: var(--ios-surface);
+    border-radius: 16px;
+    display: inline-block;
+    box-shadow: var(--shadow-md);
+    transition: transform 0.2s;
+}
+
+.welcome-quote:hover {
+    transform: translateY(-1px);
+    box-shadow: var(--shadow-lg);
+}
+
+.welcome-quote blockquote {
+    border-left: 3px solid var(--ios-green);
+    padding-left: 14px;
+    color: var(--ios-secondary);
+    text-align: left;
+    margin: 0;
+    font-size: 14px;
+    line-height: 1.6;
+    font-weight: 400;
+}
+
+/* ===== OFFLINE BANNER ===== */
+.offline-banner {
+    background: var(--ios-orange);
+    color: #fff;
+    text-align: center;
+    padding: 6px 12px;
+    font-size: 12px;
+    font-weight: 500;
+    display: none;
+}
+.offline-banner.show { display: block; }
+
+/* ===== OVERLAY ===== */
+.sidebar-overlay {
+    display: none;
+    position: fixed;
+    top: 0; left: 0; right: 0; bottom: 0;
+    background: rgba(0,0,0,0.25);
+    backdrop-filter: blur(4px);
+    -webkit-backdrop-filter: blur(4px);
+    z-index: 90;
+    animation: overlayIn 0.25s ease;
+}
+
+@keyframes overlayIn {
+    from { opacity: 0; }
+    to { opacity: 1; }
+}
+
+/* ===== RESPONSIVE ===== */
+@media (max-width: 768px) {
+    .sidebar {
+        position: fixed;
+        top: 0; left: 0; bottom: 0;
+        transform: translateX(-100%);
+        z-index: 100;
+    }
+
+    .sidebar.open {
+        transform: translateX(0);
+    }
+
+    .sidebar-overlay.show {
+        display: block;
+    }
+
+    .menu-btn {
+        display: flex;
+    }
+}
+
+@media (max-width: 640px) {
+    .header { padding: 10px 14px; }
+    .header-info h1 { font-size: 16px; }
+    .chat-container { padding: 8px 10px 4px; }
+    .qisao-bubble { max-width: 82%; }
+    .message-user .bubble { max-width: 75%; }
+    .input-area { padding: 8px 12px; padding-bottom: calc(8px + env(safe-area-inset-bottom, 0px)); }
+    .welcome-section { padding: 40px 20px 28px; }
+    .welcome-icon { width: 68px; height: 68px; }
+    .welcome-icon img, .welcome-avatar-img { width: 68px; height: 68px; }
+}
+</style>
+</head>
+<body>
+
+<div class="offline-banner" id="offlineBanner">当前处于离线状态，智能问答功能暂不可用</div>
+
+<div class="sidebar-overlay" id="sidebarOverlay" onclick="toggleSidebar()"></div>
+
+<div class="sidebar" id="sidebar">
+    <div class="sidebar-header">
+        <h2>对话记录</h2>
+        <button class="new-chat-btn" onclick="newChat()" title="新对话">✚</button>
+    </div>
+    <div class="sidebar-list" id="sidebarList"></div>
+    <div class="sidebar-footer">薇之雨 · AI七嫂智能问答</div>
+</div>
+
+<div class="main">
+    <div class="header">
+        <button class="menu-btn" id="menuBtn" onclick="toggleSidebar()">☰</button>
+        <div class="header-avatar"><img src="AVATAR_DATA_URI" class="avatar-img" alt="AI七嫂"></div>
+        <div class="header-info">
+            <h1>AI七嫂</h1>
+            <p>薇之雨品牌创始人</p>
+        </div>
+        <div class="header-right">
+            <span class="status-dot"></span>
+            <span class="status-text">在线</span>
+        </div>
+    </div>
+
+    <div class="chat-container" id="chatContainer">
+        <div class="welcome-section" id="welcomeSection">
+            <div class="welcome-icon"><img src="AVATAR_DATA_URI" class="welcome-avatar-img" alt="AI七嫂"></div>
+            <h2>你好，我是AI七嫂</h2>
+            <p>有什么问题直接问，我知无不言，言无不尽！</p>
+            <div class="welcome-quote">
+                <blockquote>记住啊，美业就是修心，修好了自己的心，客户自然就来了。</blockquote>
+            </div>
+        </div>
+    </div>
+
+    <div class="input-area">
+        <div class="input-wrapper">
+            <div class="quick-buttons">
+                <button class="quick-btn" onclick="quickAsk('调肤原理是什么？')">调肤原理</button>
+                <button class="quick-btn" onclick="quickAsk('产品安全吗？')">产品安全</button>
+                <button class="quick-btn" onclick="quickAsk('多久见效？')">多久见效</button>
+                <button class="quick-btn" onclick="quickAsk('批发体系是什么？')">批发体系</button>
+                <button class="quick-btn" onclick="quickAsk('门店如何拓客？')">门店拓客</button>
+            </div>
+            <div class="input-box">
+                <textarea id="userInput" placeholder="输入消息…" rows="1" onkeydown="handleKeyDown(event)"></textarea>
+                <button class="send-btn" id="sendBtn" onclick="sendMessage()">↑</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+/**
+ * AI七嫂 - 薇之雨品牌智能问答系统（离线增强版）
+ * 离线时显示完整主界面，API 请求失败时优雅降级
+ */
+(function() {
+'use strict';
+
+const chatContainer = document.getElementById('chatContainer');
+const userInput = document.getElementById('userInput');
+const sendBtn = document.getElementById('sendBtn');
+const welcomeSection = document.getElementById('welcomeSection');
+const sidebarList = document.getElementById('sidebarList');
+const sidebar = document.getElementById('sidebar');
+const sidebarOverlay = document.getElementById('sidebarOverlay');
+const offlineBanner = document.getElementById('offlineBanner');
+
+let isProcessing = false;
+let conversations = [];
+let currentConvId = null;
+let isOnline = true;
+
+const STORAGE_KEY = 'qisao_conversations';
+const API_BASE = 'https://web-production-b0601.up.railway.app';
+const CONNECTIVITY_CHECK_INTERVAL = 15000; // 15秒检查一次
+
+// ==================== 离线检测 ====================
+function checkConnectivity() {
+    // 尝试请求 API 根路径来判断是否在线
+    fetch(API_BASE + '/', { method: 'HEAD', mode: 'no-cors', cache: 'no-cache' })
+        .then(function() { setOnlineStatus(true); })
+        .catch(function() { setOnlineStatus(false); });
+}
+
+function setOnlineStatus(online) {
+    if (isOnline !== online) {
+        isOnline = online;
+        if (online) {
+            offlineBanner.classList.remove('show');
+        } else {
+            offlineBanner.classList.add('show');
+        }
+    }
+}
+
+// 初始检查 + 定期检查
+checkConnectivity();
+setInterval(checkConnectivity, CONNECTIVITY_CHECK_INTERVAL);
+
+// 也监听浏览器 online/offline 事件
+window.addEventListener('online', function() { setOnlineStatus(true); });
+window.addEventListener('offline', function() { setOnlineStatus(false); });
+
+// ==================== 对话管理 ====================
+function loadConversations() {
+    try {
+        var raw = localStorage.getItem(STORAGE_KEY);
+        if (raw) conversations = JSON.parse(raw);
+    } catch(e) {
+        conversations = [];
+    }
+}
+
+function saveConversations() {
+    try {
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(conversations));
+    } catch(e) {}
+}
+
+function genId() {
+    return Date.now().toString(36) + Math.random().toString(36).substr(2, 6);
+}
+
+function formatDate(ts) {
+    var d = new Date(ts);
+    var now = new Date();
+    var diff = now - d;
+    if (diff < 60000) return '刚刚';
+    if (diff < 3600000) return Math.floor(diff/60000) + '分钟前';
+    if (diff < 86400000) return Math.floor(diff/3600000) + '小时前';
+    if (diff < 172800000) return '昨天';
+    return (d.getMonth()+1) + '/' + d.getDate();
+}
+
+function getConvTitle(conv) {
+    if (conv.title) return conv.title;
+    var first = null;
+    if (conv.messages) {
+        for (var i = 0; i < conv.messages.length; i++) {
+            if (conv.messages[i].role === 'user') { first = conv.messages[i]; break; }
+        }
+    }
+    if (first) {
+        var t = first.text;
+        return t.length > 16 ? t.substring(0, 16) + '…' : t;
+    }
+    return '新对话';
+}
+
+function renderSidebar() {
+    sidebarList.innerHTML = '';
+    var sorted = conversations.slice().sort(function(a,b) { return b.updatedAt - a.updatedAt; });
+    sorted.forEach(function(conv) {
+        var item = document.createElement('div');
+        item.className = 'chat-item' + (conv.id === currentConvId ? ' active' : '');
+        item.onclick = function(e) {
+            if (e.target.closest('.chat-item-delete')) return;
+            switchChat(conv.id);
+        };
+        item.innerHTML =
+            '<div class="chat-item-icon">💬</div>' +
+            '<div class="chat-item-info">' +
+                '<div class="chat-item-title">' + escapeHtml(getConvTitle(conv)) + '</div>' +
+                '<div class="chat-item-date">' + formatDate(conv.updatedAt) + '</div>' +
+            '</div>' +
+            '<button class="chat-item-delete" onclick="window._deleteChat(\'' + conv.id + '\')">✕</button>';
+        sidebarList.appendChild(item);
+    });
+}
+
+function newChat() {
+    currentConvId = null;
+    chatContainer.innerHTML = '';
+    var ws = document.createElement('div');
+    ws.className = 'welcome-section';
+    ws.id = 'welcomeSection';
+    ws.innerHTML =
+        '<div class="welcome-icon"><img src="' + AVATAR_URI + '" class="welcome-avatar-img" alt="AI七嫂"></div>' +
+        '<h2>你好，我是AI七嫂</h2>' +
+        '<p>有什么问题直接问，我知无不言，言无不尽！</p>' +
+        '<div class="welcome-quote">' +
+            '<blockquote>记住啊，美业就是修心，修好了自己的心，客户自然就来了。</blockquote>' +
+        '</div>';
+    chatContainer.appendChild(ws);
+    renderSidebar();
+    closeSidebar();
+}
+
+function switchChat(convId) {
+    var conv = null;
+    for (var i = 0; i < conversations.length; i++) {
+        if (conversations[i].id === convId) { conv = conversations[i]; break; }
+    }
+    if (!conv) return;
+    currentConvId = convId;
+    chatContainer.innerHTML = '';
+    conv.messages.forEach(function(msg) {
+        if (msg.role === 'user') {
+            var div = document.createElement('div');
+            div.className = 'message message-user';
+            div.innerHTML = '<div class="bubble">' + escapeHtml(msg.text) + '</div>';
+            chatContainer.appendChild(div);
+        } else if (msg.role === 'qisao') {
+            var div = document.createElement('div');
+            div.className = 'message message-qisao';
+            div.innerHTML = '<div class="qisao-avatar"><img src="' + AVATAR_URI + '" class="avatar-img" alt="AI七嫂"></div><div class="qisao-bubble">' + (msg.html || '') + '</div>';
+            chatContainer.appendChild(div);
+        }
+    });
+    scrollToBottom();
+    renderSidebar();
+    closeSidebar();
+}
+
+// 暴露 deleteChat 到 window 以便 onclick 调用
+window._deleteChat = function(convId) {
+    conversations = conversations.filter(function(c) { return c.id !== convId; });
+    saveConversations();
+    if (currentConvId === convId) {
+        newChat();
+    }
+    renderSidebar();
+};
+
+function getCurrentConv() {
+    if (!currentConvId) return null;
+    for (var i = 0; i < conversations.length; i++) {
+        if (conversations[i].id === currentConvId) return conversations[i];
+    }
+    return null;
+}
+
+function ensureConv() {
+    if (!currentConvId) {
+        var conv = {
+            id: genId(),
+            title: '',
+            messages: [],
+            createdAt: Date.now(),
+            updatedAt: Date.now()
+        };
+        conversations.push(conv);
+        currentConvId = conv.id;
+        saveConversations();
+        renderSidebar();
+    }
+    return getCurrentConv();
+}
+
+function toggleSidebar() {
+    sidebar.classList.toggle('open');
+    sidebarOverlay.classList.toggle('show');
+}
+
+function closeSidebar() {
+    sidebar.classList.remove('open');
+    sidebarOverlay.classList.remove('show');
+}
+
+// ==================== 消息 UI ====================
+function autoResize(el) {
+    el.style.height = 'auto';
+    el.style.height = Math.min(el.scrollHeight, 100) + 'px';
+}
+
+userInput.addEventListener('input', function() { autoResize(this); });
+
+function handleKeyDown(e) {
+    if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault();
+        sendMessage();
+    }
+}
+
+function quickAsk(question) {
+    userInput.value = question;
+    sendMessage();
+}
+
+function hideWelcome() {
+    var ws = document.getElementById('welcomeSection');
+    if (ws) ws.style.display = 'none';
+}
+
+function addUserMessage(text) {
+    hideWelcome();
+    var div = document.createElement('div');
+    div.className = 'message message-user';
+    div.innerHTML = '<div class="bubble">' + escapeHtml(text) + '</div>';
+    chatContainer.appendChild(div);
+    scrollToBottom();
+}
+
+function addQisaoMessage(html) {
+    var div = document.createElement('div');
+    div.className = 'message message-qisao';
+    div.innerHTML =
+        '<div class="qisao-avatar"><img src="' + AVATAR_URI + '" class="avatar-img" alt="AI七嫂"></div>' +
+        '<div class="qisao-bubble">' + html + '</div>';
+    chatContainer.appendChild(div);
+    scrollToBottom();
+}
+
+function createStreamingQisaoMessage() {
+    var div = document.createElement('div');
+    div.className = 'message message-qisao';
+    div.innerHTML =
+        '<div class="qisao-avatar"><img src="' + AVATAR_URI + '" class="avatar-img" alt="AI七嫂"></div>' +
+        '<div class="qisao-bubble">' +
+            '<div class="stream-loading" id="streamLoading">' +
+                '<span class="loading-dot"></span>' +
+                '<span class="loading-dot"></span>' +
+                '<span class="loading-dot"></span>' +
+            '</div>' +
+        '</div>';
+    chatContainer.appendChild(div);
+    scrollToBottom();
+    return div.querySelector('.qisao-bubble');
+}
+
+function removeStreamLoading() {
+    var loading = document.getElementById('streamLoading');
+    if (loading) loading.remove();
+}
+
+function renderStreamingText(text) {
+    return escapeHtml(text).replace(/\n/g, '<br>');
+}
+
+function addSystemMessage(text) {
+    var div = document.createElement('div');
+    div.className = 'message message-system';
+    div.innerHTML = '<div class="bubble">' + escapeHtml(text) + '</div>';
+    chatContainer.appendChild(div);
+    scrollToBottom();
+}
+
+function showTyping() {
+    var div = document.createElement('div');
+    div.className = 'typing-indicator';
+    div.id = 'typingIndicator';
+    div.innerHTML =
+        '<div class="qisao-avatar" style="width:32px;height:32px;flex-shrink:0;"><img src="' + AVATAR_URI + '" class="avatar-img" alt="AI七嫂"></div>' +
+        '<div class="typing-bubble"><span class="typing-label">Thinking</span><div class="typing-dots"><span></span><span></span><span></span></div></div>';
+    chatContainer.appendChild(div);
+    scrollToBottom();
+}
+
+function hideTyping() {
+    var el = document.getElementById('typingIndicator');
+    if (el) el.remove();
+}
+
+function scrollToBottom() {
+    chatContainer.scrollTop = chatContainer.scrollHeight;
+}
+
+function escapeHtml(text) {
+    var div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+}
+
+function htmlToPlainText(html) {
+    var div = document.createElement('div');
+    div.innerHTML = html || '';
+    return div.textContent || div.innerText || '';
+}
+
+function buildConversationContext(conv) {
+    if (!conv || !Array.isArray(conv.messages)) return [];
+    return conv.messages.slice(-8).map(function(msg) {
+        if (msg.role === 'user') {
+            return { role: 'user', content: msg.text || '' };
+        }
+        return { role: 'assistant', content: htmlToPlainText(msg.html || msg.text || '') };
+    }).filter(function(msg) { return msg.content && msg.content.trim(); });
+}
+
+// ==================== API 通信 ====================
+function showOfflineFallback() {
+    hideTyping();
+    addQisaoMessage(
+        '<p>📡 <strong>当前处于离线状态</strong></p>' +
+        '<p>AI七嫂需要联网才能回答您的问题。请检查网络连接后重试。</p>' +
+        '<p style="color:#8E8E93;font-size:14px;">离线时您可以查看历史对话记录，所有数据已安全保存在本地。</p>'
+    );
+    setOnlineStatus(false);
+}
+
+function showNetworkError() {
+    hideTyping();
+    addQisaoMessage(
+        '<p>⚠️ <strong>网络连接失败</strong></p>' +
+        '<p>无法连接到AI七嫂服务器，请稍后重试。您可以：</p>' +
+        '<ul>' +
+            '<li>检查手机网络设置</li>' +
+            '<li>确认服务器状态</li>' +
+            '<li>稍后再试</li>' +
+        '</ul>'
+    );
+}
+
+function fetchNormalAnswer(text, conv, history) {
+    return fetch(API_BASE + '/api/query', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ question: text, history: history || [] })
+    }).then(function(resp) {
+        if (!resp.ok) throw new Error('Server error: ' + resp.status);
+        return resp.json();
+    }).then(function(data) {
+        hideTyping();
+        if (data.status === 'ok') {
+            addQisaoMessage(data.html);
+            conv.messages.push({ role: 'qisao', html: data.html });
+            conv.updatedAt = Date.now();
+            saveConversations();
+            setOnlineStatus(true);
+            return true;
+        }
+        addSystemMessage('查询出错: ' + (data.error || '未知错误'));
+        return false;
+    }).catch(function(err) {
+        hideTyping();
+        if (!navigator.onLine) {
+            showOfflineFallback();
+        } else {
+            showNetworkError();
+        }
+        return false;
+    });
+}
+
+function sendMessage() {
+    var text = userInput.value.trim();
+    if (!text || isProcessing) return;
+
+    isProcessing = true;
+    sendBtn.disabled = true;
+    userInput.value = '';
+    userInput.style.height = 'auto';
+
+    var conv = ensureConv();
+    addUserMessage(text);
+    conv.messages.push({ role: 'user', text: text });
+    if (!conv.title) conv.title = text.length > 16 ? text.substring(0, 16) + '…' : text;
+    conv.updatedAt = Date.now();
+    saveConversations();
+    renderSidebar();
+
+    var history = buildConversationContext(conv);
+
+    // 先检查在线状态
+    if (!navigator.onLine) {
+        showOfflineFallback();
+        isProcessing = false;
+        sendBtn.disabled = false;
+        userInput.focus();
+        return;
+    }
+
+    showTyping();
+
+    // 尝试流式请求
+    fetch(API_BASE + '/api/query_stream', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ question: text, history: history })
+    }).then(function(resp) {
+        if (!resp.ok || !resp.body || !window.ReadableStream) {
+            // 降级到普通请求
+            return fetchNormalAnswer(text, conv, history);
+        }
+
+        var reader = resp.body.getReader();
+        var decoder = new TextDecoder('utf-8');
+        var buffer = '';
+        var markdownText = '';
+        var finalHtml = '';
+        var bubble = null;
+        var hasStarted = false;
+
+        function processStream() {
+            return reader.read().then(function(result) {
+                if (result.done) {
+                    if (!hasStarted) {
+                        return fetchNormalAnswer(text, conv, history);
+                    }
+                    return;
+                }
+
+                buffer += decoder.decode(result.value, { stream: true });
+                var lines = buffer.split(/\r?\n/);
+                buffer = lines.pop() || '';
+
+                for (var i = 0; i < lines.length; i++) {
+                    var line = lines[i];
+                    if (line.indexOf('data: ') !== 0) continue;
+                    var payload = line.slice(6).trim();
+                    if (!payload) continue;
+
+                    var data;
+                    try {
+                        data = JSON.parse(payload);
+                    } catch (e) {
+                        continue;
+                    }
+
+                    if (data.type === 'start') {
+                        hasStarted = true;
+                        hideTyping();
+                        if (!bubble) bubble = createStreamingQisaoMessage();
+                    } else if (data.type === 'token') {
+                        hasStarted = true;
+                        if (!bubble) {
+                            hideTyping();
+                            bubble = createStreamingQisaoMessage();
+                        }
+                        removeStreamLoading();
+                        markdownText += data.content || '';
+                        bubble.innerHTML = renderStreamingText(markdownText);
+                        scrollToBottom();
+                    } else if (data.type === 'done') {
+                        hasStarted = true;
+                        removeStreamLoading();
+                        finalHtml = data.html || renderStreamingText(markdownText);
+                        if (!bubble) {
+                            hideTyping();
+                            bubble = createStreamingQisaoMessage();
+                        }
+                        bubble.innerHTML = finalHtml;
+                        conv.messages.push({ role: 'qisao', html: finalHtml });
+                        conv.updatedAt = Date.now();
+                        saveConversations();
+                        setOnlineStatus(true);
+                        scrollToBottom();
+                    } else if (data.type === 'error') {
+                        hideTyping();
+                        removeStreamLoading();
+                        addSystemMessage('查询出错: ' + (data.error || '未知错误'));
+                    }
+                }
+                return processStream();
+            });
+        }
+
+        return processStream();
+    }).catch(function(err) {
+        // 流式失败，尝试普通请求
+        return fetchNormalAnswer(text, conv, history).catch(function() {
+            hideTyping();
+            if (!navigator.onLine) {
+                showOfflineFallback();
+            } else {
+                showNetworkError();
+            }
+        });
+    }).then(function() {
+        isProcessing = false;
+        sendBtn.disabled = false;
+        userInput.focus();
+    });
+}
+
+// ==================== 初始化 ====================
+function initApp() {
+    loadConversations();
+    renderSidebar();
+
+    if (conversations.length > 0) {
+        var sorted = conversations.slice().sort(function(a,b) { return b.updatedAt - a.updatedAt; });
+        switchChat(sorted[0].id);
+    }
+}
+
+initApp();
+})();
+</script>
+</body>
+</html>

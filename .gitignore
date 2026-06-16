@@ -1,0 +1,27 @@
+# 薇之雨 · AI七嫂
+# Git 仓库配置
+
+# 依赖
+node_modules/
+
+# Android 构建产物
+android/app/build/
+android/build/
+android/.gradle/
+android/local.properties
+android/captures/
+*.apk
+*.aab
+
+# 中间文件
+web_app/offline.html
+web_app/avatar_base64.txt
+www/
+
+# IDE
+.idea/
+*.iml
+
+# OS
+.DS_Store
+Thumbs.db
