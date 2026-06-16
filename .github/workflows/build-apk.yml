@@ -1,4 +1,4 @@
-name: Build APK (Debug)
+name: Build APK
 
 on:
   push:
@@ -18,61 +18,41 @@ jobs:
           java-version: '17'
           distribution: 'temurin'
 
-      - name: Dump environment
-        run: |
-          echo "ANDROID_SDK_ROOT=$ANDROID_SDK_ROOT"
-          echo "ANDROID_HOME=$ANDROID_HOME"
-          echo "JAVA_HOME=$JAVA_HOME"
-          java -version 2>&1
-          ls "$ANDROID_SDK_ROOT/platforms/" 2>&1 || echo "NO platforms dir"
-          ls "$ANDROID_SDK_ROOT/build-tools/" 2>&1 || echo "NO build-tools dir"
-          which sdkmanager 2>&1 || echo "sdkmanager not in PATH"
-          ls "$ANDROID_SDK_ROOT/cmdline-tools/" 2>&1 || echo "NO cmdline-tools"
-
       - name: Generate offline HTML
         run: node build_offline_html.js
 
       - name: Install dependencies
         run: npm install
 
-      - name: Create local.properties
+      - name: Create local.properties (MUST be before cap sync!)
         run: |
           echo "sdk.dir=$ANDROID_SDK_ROOT" > android/local.properties
-          echo "=== local.properties ==="
+          echo "=== created local.properties ==="
           cat android/local.properties
 
-      - name: Copy web assets (bypass cap sync)
+      - name: Verify SDK
         run: |
-          rm -rf android/app/src/main/assets/public
-          mkdir -p android/app/src/main/assets/public
-          cp -r www/* android/app/src/main/assets/public/
-          echo "=== assets/public ==="
-          ls -la android/app/src/main/assets/public/
+          echo "SDK at: $ANDROID_SDK_ROOT"
+          ls "$ANDROID_SDK_ROOT/platforms/" 2>/dev/null || echo "no platforms"
+          ls "$ANDROID_SDK_ROOT/build-tools/" 2>/dev/null || echo "no build-tools"
 
-      - name: Sync capacitor config
-        run: |
-          cp capacitor.config.json android/app/src/main/assets/
-          echo "[]" > android/app/src/main/assets/capacitor.plugins.json
-          echo "=== config files ==="
-          ls android/app/src/main/assets/
+      - name: Sync web assets to Android
+        run: npx cap sync android
 
       - name: Build Debug APK
         run: |
           cd android
           chmod +x gradlew
-          ./gradlew assembleDebug --no-daemon --info 2>&1 | tee ../build.log
-        continue-on-error: true
+          ./gradlew assembleDebug --no-daemon --stacktrace 2>&1
 
-      - name: Upload build log
+      - name: Find APK
         if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: build-log
-          path: build.log
+        run: find android -name "*.apk" -type f 2>/dev/null || echo "no APK found"
 
-      - name: Upload APK (if exists)
+      - name: Upload APK
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: aiqisao-debug
           path: android/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: warn
