@@ -20,14 +20,6 @@ jobs:
           java-version: '17'
           distribution: 'temurin'
 
-      - name: Dump environment
-        run: |
-          echo "ANDROID_HOME=$ANDROID_HOME"
-          echo "JAVA_HOME=$JAVA_HOME"
-          javac -version 2>&1 || true
-          ls "$ANDROID_HOME/platforms/" 2>/dev/null || echo "no platforms"
-          ls "$ANDROID_HOME/build-tools/" 2>/dev/null || echo "no build-tools"
-
       - name: Generate offline HTML
         run: node build_offline_html.js
 
@@ -41,22 +33,18 @@ jobs:
         run: npx cap sync android
 
       - name: Build Debug APK
-        id: build
         run: |
           cd android
           chmod +x gradlew
-          ./gradlew assembleDebug --no-daemon --info 2>&1 | tee gradle_output.txt
-        continue-on-error: true
+          ./gradlew assembleDebug --no-daemon --stacktrace
 
-      - name: Upload gradle output
-        uses: actions/upload-artifact@v4
-        with:
-          name: gradle-log
-          path: android/gradle_output.txt
-          if-no-files-found: warn
+      - name: Find APK location
+        run: |
+          find android -name "*.apk" -type f 2>/dev/null || echo "NO APK"
+          ls -la android/app/build/outputs/apk/ 2>/dev/null || echo "no apk dir"
+          ls -la android/app/build/outputs/ 2>/dev/null || echo "no outputs dir"
 
       - name: Upload APK
-        if: steps.build.outcome == 'success'
         uses: actions/upload-artifact@v4
         with:
           name: aiqisao-debug
