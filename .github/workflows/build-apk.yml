@@ -38,14 +38,8 @@ jobs:
           chmod +x gradlew
           ./gradlew assembleDebug --no-daemon --stacktrace
 
-      - name: Find APK location
-        run: |
-          find android -name "*.apk" -type f 2>/dev/null || echo "NO APK"
-          ls -la android/app/build/outputs/apk/ 2>/dev/null || echo "no apk dir"
-          ls -la android/app/build/outputs/ 2>/dev/null || echo "no outputs dir"
-
-      - name: Upload APK
+      - name: Find and Upload APK
         uses: actions/upload-artifact@v4
         with:
           name: aiqisao-debug
-          path: android/app/build/outputs/apk/debug/app-debug.apk
+          path: android/app/build/outputs/apk/debug/*.apk
