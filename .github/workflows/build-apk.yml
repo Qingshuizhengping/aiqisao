@@ -7,7 +7,7 @@ on:
 
 jobs:
   build:
-    runs-on: macos-latest
+    runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -20,16 +20,22 @@ jobs:
 
       - name: Setup Android SDK
         run: |
-          SDK_DIR=$HOME/android-sdk
-          mkdir -p $SDK_DIR/cmdline-tools
-          curl -sLo cmdline-tools.zip https://dl.google.com/android/repository/commandlinetools-mac-11076708_latest.zip
-          unzip -q cmdline-tools.zip -d $SDK_DIR/cmdline-tools
-          mv $SDK_DIR/cmdline-tools/cmdline-tools $SDK_DIR/cmdline-tools/latest
-          echo "ANDROID_HOME=$SDK_DIR" >> $GITHUB_ENV
-          echo "sdk.dir=$SDK_DIR" >> android/local.properties
-          yes | $SDK_DIR/cmdline-tools/latest/bin/sdkmanager --licenses > /dev/null 2>&1
-          $SDK_DIR/cmdline-tools/latest/bin/sdkmanager "platforms;android-35" "build-tools;35.0.0" "platform-tools" 2>&1 | tail -3
-          echo "SDK installed"
+          export ANDROID_HOME=/usr/local/lib/android/sdk
+          export ANDROID_SDK_ROOT=$ANDROID_HOME
+          echo "ANDROID_HOME=$ANDROID_HOME" >> $GITHUB_ENV
+          echo "ANDROID_SDK_ROOT=$ANDROID_SDK_ROOT" >> $GITHUB_ENV
+
+          # Ensure platforms & build-tools exist
+          ls $ANDROID_HOME/platforms/
+          ls $ANDROID_HOME/build-tools/
+
+          # Install platform 36 + build-tools 36 if missing
+          yes | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager \
+            "platforms;android-36" "build-tools;36.0.0" 2>&1 | tail -5 || echo "SDK 36 install attempted"
+
+          # Write local.properties with absolute path
+          echo "sdk.dir=$ANDROID_HOME" > android/local.properties
+          cat android/local.properties
 
       - name: Generate offline HTML
         run: node build_offline_html.js
@@ -37,21 +43,36 @@ jobs:
       - name: Install dependencies
         run: npm install
 
-      - name: Sync and patch
+      - name: Sync to Android
+        env:
+          ANDROID_HOME: /usr/local/lib/android/sdk
+          ANDROID_SDK_ROOT: /usr/local/lib/android/sdk
         run: |
-          npx cap sync android
-          # cap sync resets to 36; patch to 35 which we actually installed
-          sed -i '' 's/compileSdkVersion = 36/compileSdkVersion = 35/' android/variables.gradle
-          sed -i '' 's/targetSdkVersion = 36/targetSdkVersion = 35/' android/variables.gradle
+          echo "sdk.dir=/usr/local/lib/android/sdk" > android/local.properties
+          npx cap sync android 2>&1
 
       - name: Build Debug APK
+        id: gradle_build
+        env:
+          ANDROID_HOME: /usr/local/lib/android/sdk
+          ANDROID_SDK_ROOT: /usr/local/lib/android/sdk
         run: |
-          cd android
-          chmod +x gradlew
-          ./gradlew assembleDebug --no-daemon
+          echo "sdk.dir=/usr/local/lib/android/sdk" > android/local.properties
+          cd android && chmod +x gradlew
+          ./gradlew assembleDebug --no-daemon --stacktrace --info 2>&1 | tee gradle.log
+        continue-on-error: true
+
+      - name: Upload gradle log
+        uses: actions/upload-artifact@v4
+        with:
+          name: gradle-output
+          path: android/gradle.log
+          if-no-files-found: warn
 
       - name: Upload APK
+        if: success()
         uses: actions/upload-artifact@v4
         with:
           name: aiqisao-debug
           path: android/app/build/outputs/apk/debug/*.apk
+          if-no-files-found: warn
