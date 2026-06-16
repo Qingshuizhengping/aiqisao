@@ -20,38 +20,42 @@ jobs:
 
       - name: Setup Android SDK
         run: |
-          ANDROID_SDK_ROOT=/usr/local/lib/android/sdk
-          echo "ANDROID_SDK_ROOT=$ANDROID_SDK_ROOT" >> $GITHUB_ENV
           echo "ANDROID_HOME=$ANDROID_SDK_ROOT" >> $GITHUB_ENV
-          echo "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin" >> $GITHUB_PATH
-          echo "$ANDROID_SDK_ROOT/platform-tools" >> $GITHUB_PATH
-          echo "$ANDROID_SDK_ROOT/build-tools/34.0.0" >> $GITHUB_PATH
-          # Install missing platform
-          yes | $ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager "platforms;android-35" --sdk_root=$ANDROID_SDK_ROOT 2>/dev/null || true
+          echo "SDK at $ANDROID_SDK_ROOT"
+          ls "$ANDROID_SDK_ROOT/platforms/"
+          ls "$ANDROID_SDK_ROOT/build-tools/"
+          # Install API 34 if not present
+          yes | "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" "platforms;android-34" "build-tools;34.0.0" 2>&1 | tail -5
+          ls "$ANDROID_SDK_ROOT/platforms/"
+          ls "$ANDROID_SDK_ROOT/build-tools/"
 
-      - name: Patch compileSdk to compatible version
-        run: |
-          sed -i 's/compileSdkVersion = 36/compileSdkVersion = 35/' android/variables.gradle
-          sed -i 's/targetSdkVersion = 36/targetSdkVersion = 35/' android/variables.gradle
+      - name: Create local.properties
+        run: echo "sdk.dir=$ANDROID_SDK_ROOT" > android/local.properties
 
       - name: Generate offline HTML
         run: node build_offline_html.js
 
-      - name: Install Capacitor dependencies
+      - name: Install dependencies
         run: npm install
 
-      - name: Sync web assets to Android
+      - name: Sync to Android (resets variables.gradle to 36!)
         run: npx cap sync android
 
-      - name: Grant gradlew execute permission
-        run: chmod +x android/gradlew
+      - name: Patch to API 34 (AFTER sync!)
+        run: |
+          sed -i 's/compileSdkVersion = 36/compileSdkVersion = 34/' android/variables.gradle
+          sed -i 's/targetSdkVersion = 36/targetSdkVersion = 34/' android/variables.gradle
+          echo "Patched variables.gradle:"
+          grep -E 'compileSdkVersion|targetSdkVersion' android/variables.gradle
 
       - name: Build Debug APK
         run: |
           cd android
-          ./gradlew assembleDebug --stacktrace
+          chmod +x gradlew
+          ./gradlew assembleDebug --no-daemon --stacktrace 2>&1
 
       - name: Upload APK
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: aiqisao-debug
