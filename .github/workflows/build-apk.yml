@@ -21,21 +21,9 @@ jobs:
       - name: Setup Android SDK
         run: |
           export ANDROID_HOME=/usr/local/lib/android/sdk
-          export ANDROID_SDK_ROOT=$ANDROID_HOME
           echo "ANDROID_HOME=$ANDROID_HOME" >> $GITHUB_ENV
-          echo "ANDROID_SDK_ROOT=$ANDROID_SDK_ROOT" >> $GITHUB_ENV
-
-          # Ensure platforms & build-tools exist
-          ls $ANDROID_HOME/platforms/
-          ls $ANDROID_HOME/build-tools/
-
-          # Install platform 36 + build-tools 36 if missing
-          yes | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager \
-            "platforms;android-36" "build-tools;36.0.0" 2>&1 | tail -5 || echo "SDK 36 install attempted"
-
-          # Write local.properties with absolute path
           echo "sdk.dir=$ANDROID_HOME" > android/local.properties
-          cat android/local.properties
+          yes | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager "platforms;android-36" "build-tools;36.0.0" 2>&1 | tail -3 || true
 
       - name: Generate offline HTML
         run: node build_offline_html.js
@@ -46,33 +34,35 @@ jobs:
       - name: Sync to Android
         env:
           ANDROID_HOME: /usr/local/lib/android/sdk
-          ANDROID_SDK_ROOT: /usr/local/lib/android/sdk
         run: |
           echo "sdk.dir=/usr/local/lib/android/sdk" > android/local.properties
           npx cap sync android 2>&1
 
       - name: Build Debug APK
-        id: gradle_build
         env:
           ANDROID_HOME: /usr/local/lib/android/sdk
-          ANDROID_SDK_ROOT: /usr/local/lib/android/sdk
         run: |
           echo "sdk.dir=/usr/local/lib/android/sdk" > android/local.properties
           cd android && chmod +x gradlew
-          ./gradlew assembleDebug --no-daemon --stacktrace --info 2>&1 | tee gradle.log
-        continue-on-error: true
+          ./gradlew assembleDebug --no-daemon --stacktrace 2>&1
 
-      - name: Upload gradle log
-        uses: actions/upload-artifact@v4
-        with:
-          name: gradle-output
-          path: android/gradle.log
-          if-no-files-found: warn
+      - name: Locate and Upload APK
+        run: |
+          echo "=== All APK files ==="
+          find android -name "*.apk" -type f 2>/dev/null || echo "NO APK"
+          echo "=== Outputs tree ==="
+          find android/app/build/outputs -type f 2>/dev/null || echo "no outputs"
+          # Copy APK to a known location
+          APK=$(find android -name "*.apk" -type f 2>/dev/null | head -1)
+          if [ -n "$APK" ]; then
+            mkdir -p apk-out
+            cp "$APK" apk-out/
+            echo "APK copied: $APK"
+          fi
 
       - name: Upload APK
-        if: success()
         uses: actions/upload-artifact@v4
         with:
           name: aiqisao-debug
-          path: android/app/build/outputs/apk/debug/*.apk
+          path: apk-out/*.apk
           if-no-files-found: warn
