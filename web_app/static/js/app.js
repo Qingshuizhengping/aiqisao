@@ -313,13 +313,21 @@ function buildConversationContext(conv) {
     }).filter(msg => msg.content && msg.content.trim());
 }
 
+// 带超时的 fetch
+function fetchWithTimeout(url, options, timeoutMs) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    return fetch(url, { ...options, signal: controller.signal })
+        .finally(() => clearTimeout(timer));
+}
+
 // 获取普通回答
 async function fetchNormalAnswer(text, conv, history) {
-    const resp = await fetch('/api/query', {
+    const resp = await fetchWithTimeout('/api/query', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ question: text, history: history || [] })
-    });
+    }, 30000);
     const data = await resp.json();
     hideTyping();
 
@@ -358,11 +366,11 @@ async function sendMessage() {
     showTyping();
 
     try {
-        const resp = await fetch('/api/query_stream', {
+        const resp = await fetchWithTimeout('/api/query_stream', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ question: text, history: history })
-        });
+        }, 30000);
 
         if (!resp.ok || !resp.body || !window.ReadableStream) {
             await fetchNormalAnswer(text, conv, history);
@@ -436,11 +444,16 @@ async function sendMessage() {
             }
         }
     } catch (err) {
-        try {
-            await fetchNormalAnswer(text, conv, history);
-        } catch (fallbackErr) {
-            hideTyping();
-            addSystemMessage('网络错误，请重试');
+        hideTyping();
+        if (err.name === 'AbortError') {
+            addSystemMessage('请求超时，服务器响应过慢，请稍后重试');
+        } else {
+            try {
+                await fetchNormalAnswer(text, conv, history);
+            } catch (fallbackErr) {
+                hideTyping();
+                addSystemMessage('网络错误，请检查网络连接后重试');
+            }
         }
     }
 
