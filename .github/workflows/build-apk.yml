@@ -8,6 +8,10 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+    env:
+      ANDROID_HOME: /usr/local/lib/android/sdk
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -20,10 +24,8 @@ jobs:
 
       - name: Setup Android SDK
         run: |
-          export ANDROID_HOME=/usr/local/lib/android/sdk
-          echo "ANDROID_HOME=$ANDROID_HOME" >> $GITHUB_ENV
           echo "sdk.dir=$ANDROID_HOME" > android/local.properties
-          yes | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager "platforms;android-36" "build-tools;36.0.0" 2>&1 | tail -3 || true
+          yes | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager "platforms;android-35" "build-tools;35.0.1" 2>&1 | tail -3 || true
 
       - name: Generate offline HTML
         run: node build_offline_html.js
@@ -32,37 +34,19 @@ jobs:
         run: npm install
 
       - name: Sync to Android
-        env:
-          ANDROID_HOME: /usr/local/lib/android/sdk
         run: |
-          echo "sdk.dir=/usr/local/lib/android/sdk" > android/local.properties
+          echo "sdk.dir=$ANDROID_HOME" > android/local.properties
           npx cap sync android 2>&1
 
       - name: Build Debug APK
-        env:
-          ANDROID_HOME: /usr/local/lib/android/sdk
         run: |
-          echo "sdk.dir=/usr/local/lib/android/sdk" > android/local.properties
+          echo "sdk.dir=$ANDROID_HOME" > android/local.properties
           cd android && chmod +x gradlew
           ./gradlew assembleDebug --no-daemon --stacktrace 2>&1
-
-      - name: Locate and Upload APK
-        run: |
-          echo "=== All APK files ==="
-          find android -name "*.apk" -type f 2>/dev/null || echo "NO APK"
-          echo "=== Outputs tree ==="
-          find android/app/build/outputs -type f 2>/dev/null || echo "no outputs"
-          # Copy APK to a known location
-          APK=$(find android -name "*.apk" -type f 2>/dev/null | head -1)
-          if [ -n "$APK" ]; then
-            mkdir -p apk-out
-            cp "$APK" apk-out/
-            echo "APK copied: $APK"
-          fi
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
           name: aiqisao-debug
-          path: apk-out/*.apk
+          path: android/app/build/outputs/apk/debug/*.apk
           if-no-files-found: warn
