@@ -24,8 +24,15 @@ jobs:
 
       - name: Setup Android SDK
         run: |
-          echo "sdk.dir=$ANDROID_HOME" > android/local.properties
-          yes | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager "platforms;android-35" "build-tools;35.0.1" 2>&1 | tail -3 || true
+          # Verify SDK path exists
+          ls "$ANDROID_HOME" || echo "ANDROID_HOME does not exist!"
+          # Install required SDK components
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" \
+            "platforms;android-35" \
+            "build-tools;35.0.1" 2>&1 | tail -5
+          # Verify installation
+          ls "$ANDROID_HOME/platforms/" || echo "No platforms installed!"
+          ls "$ANDROID_HOME/build-tools/" || echo "No build-tools installed!"
 
       - name: Generate offline HTML
         run: node build_offline_html.js
@@ -40,7 +47,9 @@ jobs:
 
       - name: Build Debug APK
         run: |
+          # Ensure local.properties exists with correct SDK path
           echo "sdk.dir=$ANDROID_HOME" > android/local.properties
+          cat android/local.properties
           cd android && chmod +x gradlew
           ./gradlew assembleDebug --no-daemon --stacktrace 2>&1
 
