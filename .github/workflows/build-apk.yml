@@ -22,40 +22,23 @@ jobs:
           java-version: '17'
           distribution: 'temurin'
 
-      - name: Debug Android SDK
-        run: |
-          echo "ANDROID_HOME=$ANDROID_HOME"
-          echo "ANDROID_SDK_ROOT=$ANDROID_SDK_ROOT"
-          echo "=== ls ANDROID_HOME ==="
-          ls -la /usr/local/lib/android/sdk/ 2>&1 || echo "NOT FOUND"
-          echo "=== ls alternate path ==="
-          ls -la /usr/local/lib/android/ 2>&1 || echo "NOT FOUND"
-          echo "=== which sdkmanager ==="
-          which sdkmanager 2>&1 || echo "sdkmanager not in PATH"
-          echo "=== find sdkmanager ==="
-          find / -name "sdkmanager" -type f 2>/dev/null | head -5 || echo "not found"
-
       - name: Setup Android SDK
         run: |
           SDK_PATH="/usr/local/lib/android/sdk"
-          # Try to find sdkmanager
           SDKMANAGER=$(find $SDK_PATH -name "sdkmanager" -type f 2>/dev/null | head -1)
           if [ -z "$SDKMANAGER" ]; then
-            # Try common alternative locations
             SDKMANAGER=$(find / -name "sdkmanager" -type f 2>/dev/null | head -1)
           fi
           if [ -n "$SDKMANAGER" ]; then
-            echo "Found sdkmanager at: $SDKMANAGER"
-            yes | "$SDKMANAGER" --list 2>&1 | head -20
-            yes | "$SDKMANAGER" "platforms;android-35" "build-tools;35.0.1" 2>&1 | tail -10
+            yes | "$SDKMANAGER" "platforms;android-35" "build-tools;35.0.1" 2>&1 | tail -5
           else
-            echo "sdkmanager not found! Installing cmdline-tools..."
             curl -sL -o cmdline-tools.zip https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip
             unzip -q cmdline-tools.zip -d /tmp/android-cmd
             mkdir -p $SDK_PATH/cmdline-tools/latest
             mv /tmp/android-cmd/cmdline-tools/* $SDK_PATH/cmdline-tools/latest/
-            yes | $SDK_PATH/cmdline-tools/latest/bin/sdkmanager "platforms;android-35" "build-tools;35.0.1" 2>&1 | tail -10
+            yes | $SDK_PATH/cmdline-tools/latest/bin/sdkmanager "platforms;android-35" "build-tools;35.0.1" 2>&1 | tail -5
           fi
+
       - name: Generate offline HTML
         run: node build_offline_html.js
 
@@ -71,7 +54,20 @@ jobs:
         run: |
           echo "sdk.dir=$ANDROID_HOME" > android/local.properties
           cd android && chmod +x gradlew
-          ./gradlew assembleDebug --no-daemon --stacktrace 2>&1
+          set +e
+          ./gradlew assembleDebug --no-daemon --stacktrace > gradle-output.log 2>&1
+          EXIT_CODE=$?
+          echo "=== Gradle exit code: $EXIT_CODE ==="
+          echo "=== Last 100 lines ==="
+          tail -100 gradle-output.log
+          exit $EXIT_CODE
+
+      - name: Upload build log
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gradle-build-log
+          path: android/gradle-output.log
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
