@@ -24,22 +24,9 @@ jobs:
 
       - name: Setup Android SDK
         run: |
-          echo "=== ANDROID_HOME contents ==="
-          ls "$ANDROID_HOME" 2>&1 || echo "ANDROID_HOME does not exist!"
-          echo "=== Available platforms ==="
-          ls "$ANDROID_HOME/platforms/" 2>&1 || echo "No platforms dir"
-          echo "=== Available build-tools ==="
-          ls "$ANDROID_HOME/build-tools/" 2>&1 || echo "No build-tools dir"
-          echo "=== cmdline-tools ==="
-          ls "$ANDROID_HOME/cmdline-tools/" 2>&1 || echo "No cmdline-tools dir"
-          # Install required SDK components
           yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" \
             "platforms;android-35" \
-            "build-tools;35.0.1" 2>&1 | tail -5
-          echo "=== After install: platforms ==="
-          ls "$ANDROID_HOME/platforms/" 2>&1
-          echo "=== After install: build-tools ==="
-          ls "$ANDROID_HOME/build-tools/" 2>&1
+            "build-tools;35.0.1" 2>&1 | tail -3
 
       - name: Generate offline HTML
         run: node build_offline_html.js
@@ -55,23 +42,12 @@ jobs:
       - name: Build Debug APK
         run: |
           echo "sdk.dir=$ANDROID_HOME" > android/local.properties
-          echo "=== local.properties ==="
-          cat android/local.properties
-          echo "=== Gradle version ==="
-          cd android && ./gradlew --version 2>&1 | head -5
-          echo "=== Building ==="
-          ./gradlew assembleDebug --no-daemon --stacktrace 2>&1 | tee ../gradle-output.log
-
-      - name: Upload build log on failure
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: gradle-build-log
-          path: gradle-output.log
+          cd android && chmod +x gradlew
+          ./gradlew assembleDebug --no-daemon --stacktrace 2>&1
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
           name: aiqisao-debug
-          path: android/app/build/outputs/apk/debug/*.apk
+          path: android/app/build/outputs/**/*.apk
           if-no-files-found: warn
