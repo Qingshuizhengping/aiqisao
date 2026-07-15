@@ -1,0 +1,7 @@
+{
+  "name": "ai-qisao-vercel",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "薇之雨·AI七嫂 智能问答 (Vercel 部署版)"
+}

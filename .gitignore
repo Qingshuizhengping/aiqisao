@@ -1,0 +1,5 @@
+avatar_b64.txt
+node_modules/
+.vercel/
+.DS_Store
+Thumbs.db
