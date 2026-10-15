@@ -25,3 +25,6 @@ www/
 # OS
 .DS_Store
 Thumbs.db
+
+.superdesign/
+output/

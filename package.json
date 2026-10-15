@@ -4,7 +4,7 @@
   "description": "薇之雨 · AI七嫂 - 智能问答 APK",
   "main": "www/index.html",
   "scripts": {
-    "build": "echo 'Web assets ready'",
+    "build": "node build_offline_html.js",
     "cap:add": "npx cap add android",
     "cap:sync": "npx cap sync android",
     "cap:open": "npx cap open android"

@@ -6,10 +6,13 @@
 const chatContainer = document.getElementById('chatContainer');
 const userInput = document.getElementById('userInput');
 const sendBtn = document.getElementById('sendBtn');
-const welcomeSection = document.getElementById('welcomeSection');
+const mainPanel = document.getElementById('mainPanel');
+const welcomeTemplate = document.getElementById('welcomeTemplate');
 const sidebarList = document.getElementById('sidebarList');
 const sidebar = document.getElementById('sidebar');
 const sidebarOverlay = document.getElementById('sidebarOverlay');
+const menuBtn = document.getElementById('menuBtn');
+const mobileSidebarQuery = window.matchMedia('(max-width: 760px), (max-height: 500px) and (max-width: 1000px)');
 
 let isProcessing = false;
 let conversations = [];
@@ -66,50 +69,59 @@ function getConvTitle(conv) {
 function renderSidebar() {
     sidebarList.innerHTML = '';
     const sorted = [...conversations].sort((a,b) => b.updatedAt - a.updatedAt);
+    if (!sorted.length) {
+        const empty = document.createElement('div');
+        empty.className = 'sidebar-empty';
+        empty.innerHTML = '<span>还没有对话记录</span><span>每一次交流，都从这里开始</span>';
+        sidebarList.appendChild(empty);
+        return;
+    }
     sorted.forEach(conv => {
         const item = document.createElement('div');
         item.className = 'chat-item' + (conv.id === currentConvId ? ' active' : '');
-        item.onclick = (e) => {
-            if (e.target.closest('.chat-item-delete')) return;
-            switchChat(conv.id);
-        };
-        item.innerHTML = `
-            <div class="chat-item-icon">💬</div>
-            <div class="chat-item-info">
-                <div class="chat-item-title">${escapeHtml(getConvTitle(conv))}</div>
-                <div class="chat-item-date">${formatDate(conv.updatedAt)}</div>
-            </div>
-            <button class="chat-item-delete" onclick="deleteChat('${conv.id}')">✕</button>
+        const title = getConvTitle(conv);
+        const selectButton = document.createElement('button');
+        selectButton.type = 'button';
+        selectButton.className = 'chat-item-select';
+        selectButton.disabled = isProcessing;
+        selectButton.setAttribute('aria-pressed', String(conv.id === currentConvId));
+        selectButton.innerHTML = `
+            <span class="ui-icon icon-message" aria-hidden="true"></span>
+            <span class="chat-item-info">
+                <span class="chat-item-title">${escapeHtml(title)}</span>
+                <span class="chat-item-date">${formatDate(conv.updatedAt)}</span>
+            </span>
         `;
+        selectButton.addEventListener('click', () => switchChat(conv.id));
+        const deleteButton = document.createElement('button');
+        deleteButton.type = 'button';
+        deleteButton.className = 'chat-item-delete';
+        deleteButton.disabled = isProcessing;
+        deleteButton.setAttribute('aria-label', '删除对话：' + title);
+        deleteButton.innerHTML = '<span class="ui-icon icon-trash" aria-hidden="true"></span>';
+        deleteButton.addEventListener('click', () => deleteChat(conv.id));
+        item.append(selectButton, deleteButton);
         sidebarList.appendChild(item);
     });
 }
 
 // 新建对话
 function newChat() {
+    if (isProcessing) return;
     currentConvId = null;
-    chatContainer.innerHTML = '';
-    const ws = document.createElement('div');
-    ws.className = 'welcome-section';
-    ws.id = 'welcomeSection';
-    ws.innerHTML = `
-        <div class="welcome-icon"><img src="/avatar.png" class="welcome-avatar-img"></div>
-        <h2>你好，我是AI七嫂</h2>
-        <p>有什么问题直接问，我知无不言，言无不尽！</p>
-        <div class="welcome-quote">
-            <blockquote>记住啊，美业就是修心，修好了自己的心，客户自然就来了。</blockquote>
-        </div>
-    `;
-    chatContainer.appendChild(ws);
+    chatContainer.replaceChildren(welcomeTemplate.content.cloneNode(true));
+    mainPanel.classList.add('is-welcome');
     renderSidebar();
     closeSidebar();
 }
 
 // 切换对话
 function switchChat(convId) {
+    if (isProcessing) return;
     const conv = conversations.find(c => c.id === convId);
     if (!conv) return;
     currentConvId = convId;
+    mainPanel.classList.remove('is-welcome');
     chatContainer.innerHTML = '';
     conv.messages.forEach(msg => {
         if (msg.role === 'user') {
@@ -131,6 +143,7 @@ function switchChat(convId) {
 
 // 删除对话
 function deleteChat(convId) {
+    if (isProcessing) return;
     conversations = conversations.filter(c => c.id !== convId);
     saveConversations();
     if (currentConvId === convId) {
@@ -165,15 +178,72 @@ function ensureConv() {
 
 // 切换侧边栏
 function toggleSidebar() {
+    if (!mobileSidebarQuery.matches) return;
     sidebar.classList.toggle('open');
-    sidebarOverlay.classList.toggle('show');
+    updateSidebarState();
+    if (sidebar.classList.contains('open')) {
+        sidebar.querySelector('button, a[href], input, [tabindex="0"]')?.focus();
+    } else {
+        menuBtn.focus();
+    }
 }
 
 // 关闭侧边栏
-function closeSidebar() {
+function closeSidebar(restoreFocus = true) {
+    const wasOpen = sidebar.classList.contains('open');
+    const hadFocus = sidebar.contains(document.activeElement);
     sidebar.classList.remove('open');
-    sidebarOverlay.classList.remove('show');
+    updateSidebarState();
+    if (restoreFocus && mobileSidebarQuery.matches && (wasOpen || hadFocus)) {
+        menuBtn.focus();
+    }
 }
+
+function updateSidebarState() {
+    const isOpen = sidebar.classList.contains('open');
+    const isMobile = mobileSidebarQuery.matches;
+    sidebar.inert = isMobile && !isOpen;
+    mainPanel.inert = isMobile && isOpen;
+    sidebarOverlay.classList.toggle('show', isMobile && isOpen);
+    menuBtn.setAttribute('aria-expanded', String(!isMobile || isOpen));
+    updateAppHeight();
+}
+
+function updateAppHeight() {
+    const viewport = window.visualViewport;
+    if (mobileSidebarQuery.matches && viewport && Math.abs(viewport.scale - 1) < .05) {
+        document.documentElement.style.setProperty('--app-height', viewport.height + 'px');
+    } else {
+        document.documentElement.style.removeProperty('--app-height');
+    }
+}
+
+mobileSidebarQuery.addEventListener('change', () => closeSidebar());
+window.addEventListener('resize', updateAppHeight);
+window.visualViewport?.addEventListener('resize', updateAppHeight);
+
+document.addEventListener('keydown', event => {
+    if (!mobileSidebarQuery.matches || !sidebar.classList.contains('open')) return;
+    if (event.key === 'Escape') {
+        event.preventDefault();
+        closeSidebar();
+        return;
+    }
+    if (event.key !== 'Tab') return;
+    const focusable = [...sidebar.querySelectorAll('button:not(:disabled), a[href], [tabindex="0"]')]
+        .filter(element => element.getClientRects().length > 0);
+    if (!focusable.length) return;
+    const first = focusable[0];
+    const last = focusable[focusable.length - 1];
+    const activeElement = document.activeElement;
+    if (event.shiftKey && (activeElement === first || !sidebar.contains(activeElement))) {
+        event.preventDefault();
+        last.focus();
+    } else if (!event.shiftKey && (activeElement === last || !sidebar.contains(activeElement))) {
+        event.preventDefault();
+        first.focus();
+    }
+});
 
 // 自动调整文本框高度
 function autoResize(el) {
@@ -185,7 +255,7 @@ userInput.addEventListener('input', function() { autoResize(this); });
 
 // 处理键盘事件
 function handleKeyDown(e) {
-    if (e.key === 'Enter' && !e.shiftKey) {
+    if (e.key === 'Enter' && !e.shiftKey && !e.isComposing && e.keyCode !== 229) {
         e.preventDefault();
         sendMessage();
     }
@@ -193,6 +263,7 @@ function handleKeyDown(e) {
 
 // 快速提问
 function quickAsk(question) {
+    if (isProcessing) return;
     userInput.value = question;
     sendMessage();
 }
@@ -201,6 +272,7 @@ function quickAsk(question) {
 function hideWelcome() {
     const ws = document.getElementById('welcomeSection');
     if (ws) ws.style.display = 'none';
+    mainPanel.classList.remove('is-welcome');
 }
 
 // 添加用户消息
@@ -350,6 +422,10 @@ async function sendMessage() {
 
     isProcessing = true;
     sendBtn.disabled = true;
+    document.querySelectorAll('.quick-btn, .new-chat-btn').forEach(button => {
+        button.disabled = true;
+    });
+    mainPanel.setAttribute('aria-busy', 'true');
     userInput.value = '';
     userInput.style.height = 'auto';
 
@@ -459,20 +535,26 @@ async function sendMessage() {
 
     isProcessing = false;
     sendBtn.disabled = false;
+    document.querySelectorAll('.quick-btn, .new-chat-btn').forEach(button => {
+        button.disabled = false;
+    });
+    mainPanel.setAttribute('aria-busy', 'false');
+    renderSidebar();
     userInput.focus();
 }
 
 // 初始化应用
 function initApp() {
+    updateSidebarState();
     loadConversations();
     renderSidebar();
     
-    // 如果有保存的对话，显示最后一个对话；否则显示欢迎界面
     if (conversations.length > 0) {
         const sorted = [...conversations].sort((a,b) => b.updatedAt - a.updatedAt);
         switchChat(sorted[0].id);
+    } else {
+        newChat();
     }
-    // 如果没有对话，HTML中已包含欢迎界面，无需额外处理
 }
 
 // 启动应用

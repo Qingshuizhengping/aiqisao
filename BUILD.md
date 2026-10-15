@@ -11,10 +11,15 @@
 ## 📁 项目结构
 
 ```
-yuren_apk/
+aiqisao/
+├── web_app/
+│   ├── index.html                # 网页版与离线版共用的页面结构
+│   ├── static/css/style.css      # 共用样式
+│   ├── static/js/app.js          # 网页版交互逻辑
+│   └── offline.html.TEMPLATE     # 离线版网络检测与问答逻辑
+├── build_offline_html.js          # 内联共用页面、样式与头像
 ├── www/                          # Web 资源（离线版）
-│   ├── index.html                # 主页面（CSS/JS/头像全部内联）
-│   └── avatar.png                # 头像图片
+│   └── index.html                # 生成文件，CSS/JS/头像全部内联
 ├── android/                      # Android 原生项目（Capacitor 生成）
 │   └── app/src/main/
 │       ├── AndroidManifest.xml   # 权限 & 网络安全配置
@@ -55,12 +60,16 @@ export JAVA_HOME=$(/usr/libexec/java_home -v 17)
 
 ```bash
 # 1. 进入项目目录
-cd yuren_apk
+cd aiqisao
 
-# 2. 同步 web 资源到 Android 项目
+# 2. 安装依赖并生成离线界面
+npm install
+npm run build
+
+# 3. 同步 web 资源到 Android 项目
 npx cap sync android
 
-# 3. 用 Android Studio 打开
+# 4. 用 Android Studio 打开
 npx cap open android
 ```
 
@@ -82,6 +91,16 @@ gradlew.bat assembleDebug
 ```
 
 ## 🔧 离线机制说明
+
+### 界面资源维护
+
+页面结构修改 `web_app/index.html`，视觉样式修改 `web_app/static/css/style.css`。`npm run build` 自动把这两份共享资源与头像内联到 `www/index.html`，避免网页版和离线版外观分叉；无需手动维护第二份 HTML 或 CSS。
+
+网页版交互逻辑在 `web_app/static/js/app.js`，离线版的网络检测和远程 API 降级逻辑保留在 `web_app/offline.html.TEMPLATE`。修改交互时应同时验证两种模式。
+
+按钮的 Liquid Glass 是网页渐进增强，并非原生 iOS / SwiftUI 材质复刻：基础采用清透 CSS，Chromium 额外启用 SVG 背景折射，Safari 保留清透 CSS 回退，并尊重减少透明度、增强对比度与减少动态效果偏好。布局保留安全区内边距，使用 `dvh` 与移动端 `visualViewport` 高度补偿适配软键盘和横屏。
+
+注意：若 `capacitor.config.json` 配置了 `server.url`，原生应用优先加载该远程网址。验证内置离线界面时应使用不含 `server.url` 的本地资源配置，或直接打开构建后的 `www/index.html`。
 
 ### 离线时行为
 
