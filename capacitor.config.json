@@ -3,10 +3,10 @@
   "appName": "AI七嫂",
   "webDir": "www",
   "server": {
-    "url": "https://web-production-b0601.up.railway.app/",
+    "url": "https://8.134.141.217/",
     "androidScheme": "https",
     "cleartext": true,
-    "allowNavigation": ["web-production-b0601.up.railway.app"]
+    "allowNavigation": ["8.134.141.217"]
   },
   "android": {
     "allowMixedContent": true

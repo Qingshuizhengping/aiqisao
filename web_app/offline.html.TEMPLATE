@@ -40,7 +40,7 @@ let currentConvId = null;
 let isOnline = true;
 
 const STORAGE_KEY = 'qisao_conversations';
-const API_BASE = 'https://web-production-b0601.up.railway.app';
+const API_BASE = 'https://8.134.141.217';
 const CONNECTIVITY_CHECK_INTERVAL = 15000; // 15秒检查一次
 
 // ==================== 离线检测 ====================

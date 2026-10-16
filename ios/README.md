@@ -8,7 +8,7 @@
 
 1. **使用 Safari 打开网站**
    - 在 iPhone/iPad 上打开 Safari 浏览器
-   - 访问：`https://web-production-b0601.up.railway.app/`
+   - 访问：`https://8.134.141.217/`
 
 2. **添加到主屏幕**
    - 点击底部的「分享」按钮（方框带向上箭头的图标）

@@ -128,13 +128,23 @@ gradlew.bat assembleDebug
 
 ## ⚙️ 自定义配置
 
+### 当前部署
+
+公网入口为 `https://8.134.141.217/`。服务器通过 PM2 管理 Node.js 服务，进程名为 `ai-qisao`，工作目录为 `/opt/ai-qisao`；前端文件位于该目录的 `public/`。本次更新保留服务器原有后端实现、接口协议与凭据，线上模型按用户要求切换为 `zai-org/GLM-5.3-Flash`。模型设置位于服务器的 `api/_config.js`，不由前端控制；`/api/health` 可检查当前模型，`/api/query_stream` 已完成一次真实流式问答验证。
+
+HTTPS 使用受信任的 IP 证书，由独立环境中的 Certbot 5.8 管理：客户端为 `/opt/aiqisao-certbot/bin/certbot`，配置目录为 `/etc/letsencrypt-aiqisao`。IP 证书有效期约 160 小时，必须保持自动续期；定时器为 `aiqisao-certbot-renew.timer`，部署钩子 `/etc/letsencrypt-aiqisao/renewal-hooks/deploy/reload-nginx.sh` 在续期后重新加载 Nginx。已验证模拟续期及重载钩子；仍应持续检查续期定时器和证书有效期，不能依赖首次签发长期运行。
+
+SSH 连接使用部署机器上的 `AIQISAO_SSH_HOST`、`AIQISAO_SSH_USER`、`AIQISAO_SSH_PASSWORD` 环境变量，凭据值不写入仓库、构建产物或日志。Android 继续使用系统 CA 信任与 HTTPS 限制，不为证书错误关闭校验。
+
+当前生产网页与远程 App 入口使用同源 API，已验证正常。内置离线页面恢复联网后的请求属于跨源调用，仍需针对实际 WebView Origin 单独配置服务端 CORS 允许列表；本次未开放通配或 `null` Origin，不能将静态离线页面构建成功视为该跨源链路已通过。
+
 ### 修改后端 API 地址
 
-编辑 `www/index.html`，找到：
+编辑 `web_app/offline.html.TEMPLATE`，找到：
 ```javascript
-const API_BASE = 'https://web-production-b0601.up.railway.app';
+const API_BASE = 'https://8.134.141.217';
 ```
-替换为新地址后重新运行 `npx cap sync android`。
+替换为验证过 HTTPS 的新地址后，运行 `npm run build` 重新生成 `www/index.html`，再运行 `npx cap sync android`。若应用首屏也迁移，应同步更新 `capacitor.config.json` 的 `server.url` 和 `allowNavigation`，以及 iOS 安装入口。
 
 ### 修改 App 名称
 

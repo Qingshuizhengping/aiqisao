@@ -42,7 +42,7 @@ config = f'''<?xml version="1.0" encoding="UTF-8"?>
             <key>PayloadVersion</key>
             <integer>1</integer>
             <key>URL</key>
-            <string>https://web-production-b0601.up.railway.app/</string>
+            <string>https://8.134.141.217/</string>
             <key>IgnoreManifestScope</key>
             <false/>
         </dict>
