@@ -236,15 +236,11 @@ function syncDrawerState() {
     mainPanel.inert = isOpen;
     sidebarOverlay.classList.toggle('show', isOpen);
     menuBtn.setAttribute('aria-expanded', String(isOpen));
-    updateAppHeight();
 }
 
-function updateAppHeight() {
-    var viewport = window.visualViewport;
-    if (drawerMedia.matches && viewport && Math.abs(viewport.scale - 1) < 0.05) {
-        document.documentElement.style.setProperty('--app-height', viewport.height + 'px');
-    } else {
-        document.documentElement.style.removeProperty('--app-height');
+function focusInputAfterReply() {
+    if (!window.matchMedia('(pointer: coarse)').matches && !drawerMedia.matches) {
+        userInput.focus({ preventScroll: true });
     }
 }
 
@@ -259,8 +255,6 @@ function closeSidebar(restoreFocus) {
 }
 
 drawerMedia.addEventListener('change', function() { closeSidebar(false); });
-window.addEventListener('resize', updateAppHeight);
-if (window.visualViewport) window.visualViewport.addEventListener('resize', updateAppHeight);
 document.addEventListener('keydown', function(event) {
     if (event.key === 'Escape') {
         closeSidebar();
@@ -487,7 +481,7 @@ function sendMessage() {
     if (!navigator.onLine) {
         showOfflineFallback();
         setProcessing(false);
-        userInput.focus();
+        focusInputAfterReply();
         return;
     }
 
@@ -500,7 +494,7 @@ function sendMessage() {
             removeStreamLoading();
             addQisaoMessage('<p>⏱️ <strong>请求超时</strong></p><p>服务器响应时间过长，请稍后重试。</p>');
             setProcessing(false);
-            userInput.focus();
+            focusInputAfterReply();
         }
     }, 60000);
 
@@ -618,7 +612,7 @@ function sendMessage() {
     }).then(function() {
         clearTimeout(safetyTimeout);
         setProcessing(false);
-        userInput.focus();
+        focusInputAfterReply();
     });
 }
 

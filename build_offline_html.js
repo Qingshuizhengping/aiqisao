@@ -6,13 +6,15 @@ const template = fs.readFileSync(path.join(webDir, 'offline.html.TEMPLATE'), 'ut
 const onlinePage = fs.readFileSync(path.join(webDir, 'index.html'), 'utf-8');
 const styles = fs.readFileSync(path.join(webDir, 'static', 'css', 'style.css'), 'utf-8');
 const glassScript = fs.readFileSync(path.join(webDir, 'static', 'js', 'glass.js'), 'utf-8');
+const viewportScript = fs.readFileSync(path.join(webDir, 'static', 'js', 'viewport.js'), 'utf-8');
 const bodyMatch = onlinePage.match(/<body\b[^>]*>([\s\S]*?)<\/body>/i);
 
 if (!bodyMatch) throw new Error('web_app/index.html must contain a body element.');
 
 const body = bodyMatch[1]
   .replace(/<script\b[^>]*\bsrc=["'][^"']*app\.js["'][^>]*>\s*<\/script>/gi, '')
-  .replace(/<script\b[^>]*\bsrc=["']\/?static\/js\/glass\.js["'][^>]*>\s*<\/script>/gi, () => '<script>\n' + glassScript + '\n</script>');
+  .replace(/<script\b[^>]*\bsrc=["']\/?static\/js\/glass\.js["'][^>]*>\s*<\/script>/gi, () => '<script>\n' + glassScript + '\n</script>')
+  .replace(/<script\b[^>]*\bsrc=["']\/?static\/js\/viewport\.js["'][^>]*>\s*<\/script>/gi, () => '<script>\n' + viewportScript + '\n</script>');
 const dataUri = 'data:image/png;base64,' + fs.readFileSync(path.join(webDir, 'avatar.png')).toString('base64');
 const result = template
   .replace('{{APP_STYLES}}', () => styles)

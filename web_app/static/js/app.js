@@ -206,21 +206,9 @@ function updateSidebarState() {
     mainPanel.inert = isMobile && isOpen;
     sidebarOverlay.classList.toggle('show', isMobile && isOpen);
     menuBtn.setAttribute('aria-expanded', String(!isMobile || isOpen));
-    updateAppHeight();
-}
-
-function updateAppHeight() {
-    const viewport = window.visualViewport;
-    if (mobileSidebarQuery.matches && viewport && Math.abs(viewport.scale - 1) < .05) {
-        document.documentElement.style.setProperty('--app-height', viewport.height + 'px');
-    } else {
-        document.documentElement.style.removeProperty('--app-height');
-    }
 }
 
 mobileSidebarQuery.addEventListener('change', () => closeSidebar());
-window.addEventListener('resize', updateAppHeight);
-window.visualViewport?.addEventListener('resize', updateAppHeight);
 
 document.addEventListener('keydown', event => {
     if (!mobileSidebarQuery.matches || !sidebar.classList.contains('open')) return;
@@ -540,7 +528,9 @@ async function sendMessage() {
     });
     mainPanel.setAttribute('aria-busy', 'false');
     renderSidebar();
-    userInput.focus();
+    if (!window.matchMedia('(pointer: coarse)').matches && !mobileSidebarQuery.matches) {
+        userInput.focus({ preventScroll: true });
+    }
 }
 
 // 初始化应用
