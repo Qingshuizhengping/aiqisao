@@ -643,8 +643,11 @@ button, a { touch-action: manipulation; }
 
 .qisao-bubble > :first-child { margin-top: 0; }
 .qisao-bubble > :last-child { margin-bottom: 0; }
-/* 流式阶段用 textContent 写入，靠 pre-wrap 保留换行，省掉每帧的 HTML 解析 */
-.qisao-bubble.is-streaming { white-space: pre-wrap; }
+.qisao-bubble.is-streaming { white-space: normal; }
+.stream-tail { white-space: pre-wrap; }
+.stream-tail.is-formatted { white-space: normal; }
+.stream-notice { color: var(--secondary); font-size: 12px; }
+.stream-status { margin-left: 8px; color: var(--secondary); font-size: 12px; }
 .qisao-bubble.is-streaming .stream-loading { white-space: normal; }
 .qisao-bubble h2 { margin: 20px 0 10px; font-size: 18px; font-weight: 600; line-height: 1.5; letter-spacing: -.2px; }
 .qisao-bubble h3 { margin: 18px 0 8px; font-size: 15.5px; font-weight: 600; line-height: 1.5; }

@@ -5,6 +5,7 @@
 //   3. 静态文件关闭 etag 二次读盘，改用 mtime + 长的 stalez 窗口
 import express from 'express';
 import { createReadStream, statSync } from 'node:fs';
+import { once } from 'node:events';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { API_BASE, MODEL, MAX_TOKENS, TEMPERATURE, buildMessages, textToHtml, getApiKey } from './api/_config.js';
@@ -13,6 +14,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC_DIR = path.join(__dirname, 'public');
 const app = express();
 const PORT = process.env.PORT || 3000;
+const MODEL_REQUEST_OPTIONS = MODEL === 'zai-org/GLM-5.3-Flash' ? { reasoning_effort: 'low' } : {};
 
 app.disable('x-powered-by');
 app.use(express.json({ limit: '1mb' }));
@@ -112,7 +114,7 @@ app.post('/api/query', async (req, res) => {
         const resp = await fetch(API_BASE + '/chat/completions', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + apiKey },
-            body: JSON.stringify({ model: MODEL, messages: buildMessages(question, history), stream: false, max_tokens: MAX_TOKENS, temperature: TEMPERATURE })
+            body: JSON.stringify({ model: MODEL, ...MODEL_REQUEST_OPTIONS, messages: buildMessages(question, history), stream: false, max_tokens: MAX_TOKENS, temperature: TEMPERATURE })
         });
         if (!resp.ok) {
             const errText = await resp.text().catch(() => '');
@@ -137,45 +139,126 @@ app.post('/api/query_stream', async (req, res) => {
     res.setHeader('Cache-Control', 'no-cache, no-transform');
     res.setHeader('Connection', 'keep-alive');
     res.setHeader('X-Accel-Buffering', 'no');
-    const write = (obj) => res.write('data: ' + JSON.stringify(obj) + '\n\n');
+    res.socket?.setNoDelay(true);
+    res.flushHeaders();
+
+    const controller = new AbortController();
+    let reader;
+    let timedOut = false;
+    const cancel = () => {
+        if (!res.writableEnded) controller.abort();
+    };
+    req.once('aborted', cancel);
+    res.once('close', cancel);
+    const timeout = setTimeout(() => {
+        timedOut = true;
+        controller.abort();
+    }, 180000);
+    const heartbeat = setInterval(() => {
+        if (!res.destroyed && !res.writableEnded && !res.writableNeedDrain) res.write(': heartbeat\n\n');
+    }, 15000);
+    const write = async (data) => {
+        if (res.destroyed || res.writableEnded) throw new Error('客户端已断开连接');
+        if (!res.write('data: ' + JSON.stringify(data) + '\n\n')) {
+            await once(res, 'drain', { signal: controller.signal });
+        }
+    };
 
     try {
+        await write({ type: 'start' });
         const resp = await fetch(API_BASE + '/chat/completions', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + apiKey },
-            body: JSON.stringify({ model: MODEL, messages: buildMessages(question, history), stream: true, max_tokens: MAX_TOKENS, temperature: TEMPERATURE })
+            headers: { 'Content-Type': 'application/json', 'Accept': 'text/event-stream', 'Authorization': 'Bearer ' + apiKey },
+            signal: controller.signal,
+            body: JSON.stringify({ model: MODEL, ...MODEL_REQUEST_OPTIONS, messages: buildMessages(question, history), stream: true, max_tokens: MAX_TOKENS, temperature: TEMPERATURE })
         });
         if (!resp.ok) {
             const errText = await resp.text().catch(() => '');
-            write({ type: 'error', error: 'AI服务返回 HTTP ' + resp.status + '：' + errText.slice(0, 200) });
-            return res.end();
+            throw new Error('AI服务返回 HTTP ' + resp.status + '：' + errText.slice(0, 200));
         }
-        write({ type: 'start' });
-        const reader = resp.body.getReader();
+        if (!resp.body) throw new Error('AI服务未返回流式内容，请重试');
+        reader = resp.body.getReader();
         const decoder = new TextDecoder('utf-8');
-        let buffer = '', full = '';
-        while (true) {
-            const { value, done } = await reader.read();
-            if (done) break;
-            buffer += decoder.decode(value, { stream: true });
-            const lines = buffer.split(/\r?\n/);
-            buffer = lines.pop() || '';
-            for (const line of lines) {
-                const trimmed = line.trim();
-                if (!trimmed.startsWith('data:')) continue;
-                const payload = trimmed.slice(5).trim();
-                if (!payload || payload === '[DONE]') continue;
-                let data;
-                try { data = JSON.parse(payload); } catch (e) { continue; }
-                const token = data && data.choices && data.choices[0] && data.choices[0].delta && data.choices[0].delta.content;
-                if (token) { full += token; write({ type: 'token', content: token }); }
+        let buffer = '', full = '', eventData = [];
+        let streamDone = false, finished = false, thinking = false;
+
+        const dispatch = async () => {
+            const payload = eventData.join('\n').trim();
+            eventData = [];
+            if (!payload) return;
+            if (payload === '[DONE]') {
+                streamDone = true;
+                return;
             }
+            let data;
+            try { data = JSON.parse(payload); } catch {
+                throw new Error('AI服务返回了无效的流式数据，请重试');
+            }
+            if (data.error || (data.code && !data.choices)) {
+                throw new Error(String(data.error?.message || data.message || data.error || 'AI服务暂时不可用').slice(0, 200));
+            }
+            const choice = data.choices?.[0];
+            const token = choice?.delta?.content;
+            if (!thinking && !full && choice?.delta?.reasoning_content) {
+                thinking = true;
+                await write({ type: 'status', stage: 'thinking' });
+            }
+            if (typeof token === 'string' && token) {
+                full += token;
+                await write({ type: 'token', content: token });
+            }
+            if (choice?.finish_reason != null) finished = true;
+        };
+        const consumeLine = async (line) => {
+            if (!line) return dispatch();
+            const separator = line.indexOf(':');
+            const field = separator < 0 ? line : line.slice(0, separator);
+            if (field !== 'data') return;
+            let value = separator < 0 ? '' : line.slice(separator + 1);
+            if (value.startsWith(' ')) value = value.slice(1);
+            eventData.push(value);
+        };
+        const consume = async (chunk, final = false) => {
+            buffer += chunk;
+            while (!streamDone) {
+                const newline = buffer.search(/[\r\n]/);
+                if (newline < 0 || (!final && newline === buffer.length - 1 && buffer[newline] === '\r')) break;
+                const line = buffer.slice(0, newline);
+                const delimiterLength = buffer[newline] === '\r' && buffer[newline + 1] === '\n' ? 2 : 1;
+                buffer = buffer.slice(newline + delimiterLength);
+                await consumeLine(line);
+            }
+            if (final && !streamDone) {
+                if (buffer) await consumeLine(buffer);
+                buffer = '';
+                await dispatch();
+            }
+        };
+
+        while (!streamDone) {
+            const { value, done } = await reader.read();
+            if (done) {
+                await consume(decoder.decode(), true);
+                break;
+            }
+            await consume(decoder.decode(value, { stream: true }));
         }
-        write({ type: 'done', html: textToHtml(full) });
+        if (!streamDone && !finished) throw new Error('AI连接提前结束，回答尚未完成，请重试');
+        if (!full.trim()) throw new Error('AI服务未生成回答，请重试');
+        await write({ type: 'done', text: full, html: textToHtml(full) });
         return res.end();
     } catch (e) {
-        write({ type: 'error', error: (e && e.message) || '内部错误' });
-        return res.end();
+        if (!res.destroyed && !res.writableEnded) {
+            res.write('data: ' + JSON.stringify({ type: 'error', error: timedOut ? 'AI服务响应超时，请稍后重试' : (e && e.message) || '内部错误' }) + '\n\n');
+            res.end();
+        }
+    } finally {
+        clearTimeout(timeout);
+        clearInterval(heartbeat);
+        req.removeListener('aborted', cancel);
+        res.removeListener('close', cancel);
+        controller.abort();
+        if (reader) await reader.cancel().catch(() => {});
     }
 });
 

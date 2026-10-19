@@ -171,7 +171,15 @@
                 div.innerHTML = '<div class="bubble">' + escapeHtml(msg.text || '') + '</div>';
             } else if (msg.role === 'qisao') {
                 div.className = 'message message-qisao';
-                div.innerHTML = qisaoMessageMarkup(msg.html || '');
+                div.innerHTML = qisaoMessageMarkup('');
+                var savedBubble = div.querySelector('.qisao-bubble');
+                savedBubble.appendChild(renderAnswerText(msg.text || htmlToPlainText(msg.html || '')));
+                if (msg.incomplete) {
+                    var savedNotice = document.createElement('p');
+                    savedNotice.className = 'stream-notice';
+                    savedNotice.textContent = msg.notice || '回答未完成，请重试。';
+                    savedBubble.appendChild(savedNotice);
+                }
             } else {
                 continue;
             }
@@ -313,7 +321,7 @@
         div.className = 'message message-user';
         div.innerHTML = '<div class="bubble">' + escapeHtml(text) + '</div>';
         chatContainer.appendChild(div);
-        scrollToBottom();
+        scrollToBottom(true);
     }
 
     function addQisaoMessage(html) {
@@ -330,7 +338,7 @@
         div.innerHTML =
             avatarMarkup() +
             '<div class="qisao-bubble is-streaming">' +
-            '<div class="stream-loading" id="streamLoading"><span class="loading-dot"></span><span class="loading-dot"></span><span class="loading-dot"></span></div>' +
+            '<div class="stream-loading" id="streamLoading"><span class="loading-dot"></span><span class="loading-dot"></span><span class="loading-dot"></span><span class="stream-status" role="status">正在连接模型…</span></div>' +
             '</div>';
         chatContainer.appendChild(div);
         scrollToBottom();
@@ -343,7 +351,120 @@
     }
 
     function renderStreamingText(text) {
-        return escapeHtml(text).replace(/\n/g, '<br>');
+        var container = document.createElement('div');
+        container.appendChild(renderAnswerText(text));
+        return container.innerHTML;
+    }
+
+    function appendInline(container, text) {
+        var pattern = /(`[^`\n]+`|\*\*[^*\n]+\*\*|__[^_\n]+__|\*[^*\n]+\*|_[^_\n]+_|\[[^\]\n]+\]\([^\s)]+\))/g;
+        var offset = 0;
+        var match;
+        while ((match = pattern.exec(text))) {
+            container.appendChild(document.createTextNode(text.slice(offset, match.index)));
+            var token = match[0];
+            var element;
+            if (token[0] === '`') {
+                element = document.createElement('code');
+                element.textContent = token.slice(1, -1);
+            } else if (token.slice(0, 2) === '**' || token.slice(0, 2) === '__') {
+                element = document.createElement('strong');
+                element.textContent = token.slice(2, -2);
+            } else if (token[0] === '[') {
+                var link = /^\[([^\]]+)\]\(([^)]+)\)$/.exec(token);
+                try {
+                    var url = new URL(link[2], location.origin);
+                    if (!/^(https?:|mailto:)$/.test(url.protocol)) throw new Error('Unsafe link');
+                    element = document.createElement('a');
+                    element.href = url.href;
+                    element.rel = 'noopener noreferrer';
+                    element.target = '_blank';
+                    element.textContent = link[1];
+                } catch (error) {
+                    element = document.createTextNode(token);
+                }
+            } else {
+                element = document.createElement('em');
+                element.textContent = token.slice(1, -1);
+            }
+            container.appendChild(element);
+            offset = match.index + token.length;
+        }
+        container.appendChild(document.createTextNode(text.slice(offset)));
+    }
+
+    function renderAnswerText(text) {
+        var fragment = document.createDocumentFragment();
+        var lines = String(text || '').replace(/\r\n?/g, '\n').split('\n');
+        var position = 0;
+        function isBlock(line) { return /^\s*(?:#{1,6}\s|[-+*]\s|\d+[.)]\s|>|`{3,}|~{3,}|(?:-{3,}|\*{3,}|_{3,})\s*$)/.test(line); }
+        function cells(line) { return line.trim().replace(/^\|/, '').replace(/\|$/, '').split('|').map(function (cell) { return cell.trim(); }); }
+        while (position < lines.length) {
+            var line = lines[position];
+            if (!line.trim()) { position++; continue; }
+            var fence = /^\s*(`{3,}|~{3,})(.*)$/.exec(line);
+            var heading = /^\s*(#{1,6})\s+(.+)$/.exec(line);
+            var list = /^\s*([-+*]|\d+[.)])\s+(.+)$/.exec(line);
+            var element;
+            if (fence) {
+                element = document.createElement('pre');
+                var code = document.createElement('code');
+                var codeLines = [];
+                position++;
+                while (position < lines.length && !new RegExp('^\\s*' + fence[1][0] + '{' + fence[1].length + ',}\\s*$').test(lines[position])) codeLines.push(lines[position++]);
+                code.textContent = codeLines.join('\n');
+                element.appendChild(code);
+                if (position < lines.length) position++;
+            } else if (heading) {
+                element = document.createElement('h' + Math.min(heading[1].length + 1, 4));
+                appendInline(element, heading[2]);
+                position++;
+            } else if (/^\s*(?:-{3,}|\*{3,}|_{3,})\s*$/.test(line)) {
+                element = document.createElement('hr');
+                position++;
+            } else if (list) {
+                var ordered = /^\d/.test(list[1]);
+                element = document.createElement(ordered ? 'ol' : 'ul');
+                if (ordered) element.start = parseInt(list[1], 10);
+                while (position < lines.length) {
+                    var item = /^\s*([-+*]|\d+[.)])\s+(.+)$/.exec(lines[position]);
+                    if (!item || /^\d/.test(item[1]) !== ordered) break;
+                    var listItem = document.createElement('li');
+                    appendInline(listItem, item[2]);
+                    element.appendChild(listItem);
+                    position++;
+                }
+            } else if (/^\s*>/.test(line)) {
+                element = document.createElement('blockquote');
+                while (position < lines.length && /^\s*>/.test(lines[position])) {
+                    if (element.childNodes.length) element.appendChild(document.createElement('br'));
+                    appendInline(element, lines[position++].replace(/^\s*>\s?/, ''));
+                }
+            } else if (line.includes('|') && position + 1 < lines.length && cells(lines[position + 1]).every(function (cell) { return /^:?-{3,}:?$/.test(cell); })) {
+                element = document.createElement('table');
+                var tableHead = document.createElement('thead');
+                var headerRow = document.createElement('tr');
+                cells(line).forEach(function (cell) { var header = document.createElement('th'); appendInline(header, cell); headerRow.appendChild(header); });
+                tableHead.appendChild(headerRow);
+                element.appendChild(tableHead);
+                var tableBody = document.createElement('tbody');
+                position += 2;
+                while (position < lines.length && lines[position].includes('|') && lines[position].trim()) {
+                    var row = document.createElement('tr');
+                    cells(lines[position++]).forEach(function (cell) { var entry = document.createElement('td'); appendInline(entry, cell); row.appendChild(entry); });
+                    tableBody.appendChild(row);
+                }
+                element.appendChild(tableBody);
+            } else {
+                element = document.createElement('p');
+                do {
+                    if (element.childNodes.length) element.appendChild(document.createElement('br'));
+                    appendInline(element, lines[position++]);
+                } while (position < lines.length && lines[position].trim() && !isBlock(lines[position]) && !(lines[position].includes('|') && position + 1 < lines.length && cells(lines[position + 1]).every(function (cell) { return /^:?-{3,}:?$/.test(cell); })));
+            }
+            fragment.appendChild(element);
+        }
+        return fragment;
     }
 
     function addSystemMessage(text) {
@@ -359,7 +480,7 @@
         div.className = 'typing-indicator';
         div.id = 'typingIndicator';
         div.innerHTML = avatarMarkup() +
-            '<div class="typing-bubble"><span class="typing-label">Thinking</span><div class="typing-dots"><span></span><span></span><span></span></div></div>';
+            '<div class="typing-bubble"><span class="typing-label">正在连接模型…</span><div class="typing-dots"><span></span><span></span><span></span></div></div>';
         chatContainer.appendChild(div);
         scrollToBottom();
     }
@@ -376,7 +497,7 @@
 
     function scrollToBottom(force) {
         if (!force && !isNearBottom()) return;
-        chatContainer.scrollTop = chatContainer.scrollHeight;
+        chatContainer.scrollTo({ top: chatContainer.scrollHeight, behavior: 'instant' });
     }
 
     function escapeHtml(text) {
@@ -386,44 +507,50 @@
     }
 
     function htmlToPlainText(html) {
-        var div = document.createElement('div');
-        div.innerHTML = html || '';
-        return div.textContent || div.innerText || '';
+        var documentBody = new DOMParser().parseFromString(html || '', 'text/html').body;
+        documentBody.querySelectorAll('script, style, iframe, object, embed').forEach(function (element) { element.remove(); });
+        documentBody.querySelectorAll('br').forEach(function (element) { element.replaceWith('\n'); });
+        documentBody.querySelectorAll('p, div, li, h1, h2, h3, h4, blockquote, pre, tr').forEach(function (element) { element.appendChild(document.createTextNode('\n')); });
+        return documentBody.textContent.trim();
     }
 
     function buildConversationContext(conv) {
         if (!conv || !Array.isArray(conv.messages)) return [];
-        return conv.messages.slice(-8).map(function (msg) {
+        return conv.messages.filter(function (msg) { return !msg.incomplete; }).slice(-8).map(function (msg) {
             if (msg.role === 'user') return { role: 'user', content: msg.text || '' };
-            return { role: 'assistant', content: htmlToPlainText(msg.html || msg.text || '') };
+            return { role: 'assistant', content: msg.text || htmlToPlainText(msg.html || '') };
         }).filter(function (msg) { return msg.content && msg.content.trim(); });
     }
 
     /* ------------------------------ 网络 ------------------------------ */
-    function fetchWithTimeout(url, options, timeoutMs) {
-        var controller = new AbortController();
-        var timer = setTimeout(function () { controller.abort(); }, timeoutMs);
-        return fetch(url, Object.assign({}, options, { signal: controller.signal }))
-            .finally(function () { clearTimeout(timer); });
-    }
-
     function syncOnline() {
         if (!offlineBanner) return;
         offlineBanner.classList.toggle('show', !navigator.onLine);
     }
 
     async function fetchNormalAnswer(text, conv, history) {
-        var resp = await fetchWithTimeout('/api/query', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ question: text, history: history || [] })
-        }, 30000);
-        var data = await resp.json();
+        var controller = new AbortController();
+        var timer = setTimeout(function () { controller.abort(); }, 30000);
+        var data;
+        try {
+            var resp = await fetch('/api/query', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ question: text, history: history || [] }),
+                signal: controller.signal
+            });
+            data = await resp.json();
+            if (!resp.ok) throw new Error(data.error || '服务暂时不可用');
+        } finally {
+            clearTimeout(timer);
+        }
         hideTyping();
 
         if (data.status === 'ok') {
-            addQisaoMessage(data.html);
-            conv.messages.push({ role: 'qisao', html: data.html });
+            var answer = typeof data.text === 'string' ? data.text : htmlToPlainText(data.html || '');
+            var html = renderStreamingText(answer);
+            addQisaoMessage(html);
+            conv.messages.push({ role: 'qisao', text: answer, html: html });
             conv.updatedAt = Date.now();
             saveConversations();
             return true;
@@ -446,6 +573,7 @@
         userInput.style.height = 'auto';
 
         var conv = ensureConv();
+        var history = buildConversationContext(conv);
         addUserMessage(text);
         conv.messages.push({ role: 'user', text: text });
         if (!conv.title) conv.title = text.length > 16 ? text.slice(0, 16) + '…' : text;
@@ -453,113 +581,190 @@
         saveConversations();
         renderSidebar(true);
 
-        var history = buildConversationContext(conv);
         showTyping();
 
+        var controller = new AbortController();
+        var idleTimer = 0;
+        var totalTimer = setTimeout(function () { controller.abort(); }, 180000);
+        var pendingRender = 0;
+        var finished = false;
+        var markdownText = '';
+        var bubble = null;
+        var renderedPrefix = 0;
+        var tail = null;
+        var tailText = '';
+        var previewTimer = 0;
+        var previewAt = 0;
+
+        function resetIdleTimer() {
+            clearTimeout(idleTimer);
+            idleTimer = setTimeout(function () { controller.abort(); }, 30000);
+        }
+
+        function ensureBubble() {
+            if (!bubble) { hideTyping(); bubble = createStreamingQisaoMessage(); }
+            return bubble;
+        }
+
+        function previewTail() {
+            previewTimer = 0;
+            if (finished || !tail) return;
+            var follow = isNearBottom();
+            tail.classList.add('is-formatted');
+            tail.replaceChildren(renderAnswerText(markdownText.slice(renderedPrefix)));
+            previewAt = performance.now();
+            if (follow) scrollToBottom(true);
+        }
+
+        function paint() {
+            pendingRender = 0;
+            if (finished || !markdownText) return;
+            var follow = isNearBottom();
+            ensureBubble();
+            if (!tail) {
+                tail = document.createElement('div');
+                tail.className = 'stream-tail';
+                tail.appendChild(document.createTextNode(''));
+                bubble.replaceChildren(tail);
+            }
+            var boundary = markdownText.lastIndexOf('\n\n');
+            while (boundary >= renderedPrefix && (markdownText.slice(0, boundary).match(/^\s*(?:`{3,}|~{3,})/gm) || []).length % 2) boundary = markdownText.lastIndexOf('\n\n', boundary - 1);
+            if (boundary >= renderedPrefix) {
+                bubble.insertBefore(renderAnswerText(markdownText.slice(renderedPrefix, boundary + 2)), tail);
+                renderedPrefix = boundary + 2;
+                clearTimeout(previewTimer);
+                previewTimer = 0;
+                previewAt = 0;
+                tail.classList.remove('is-formatted');
+                tail.replaceChildren(document.createTextNode(''));
+                tailText = '';
+            }
+            var nextTail = markdownText.slice(renderedPrefix);
+            if (tail.classList.contains('is-formatted') || /[*_`[\]|]|^\s*(?:#{1,6}\s|>\s|[-+]\s|\d+[.)]\s)/m.test(nextTail)) {
+                if (performance.now() - previewAt >= 80) previewTail();
+                else if (!previewTimer) previewTimer = setTimeout(previewTail, 80 - (performance.now() - previewAt));
+            } else {
+                tail.firstChild.appendData(nextTail.slice(tailText.length));
+            }
+            tailText = nextTail;
+            if (follow) scrollToBottom(true);
+        }
+
+        function saveAnswer(answer, notice) {
+            conv.messages.push({ role: 'qisao', text: answer, html: renderStreamingText(answer), incomplete: !!notice, notice: notice || '' });
+            conv.updatedAt = Date.now();
+            saveConversations();
+        }
+
+        function interrupt(message) {
+            if (finished) return;
+            finished = true;
+            if (pendingRender) cancelAnimationFrame(pendingRender);
+            clearTimeout(previewTimer);
+            hideTyping();
+            if (markdownText.trim()) {
+                var follow = isNearBottom();
+                ensureBubble().classList.remove('is-streaming');
+                bubble.replaceChildren(renderAnswerText(markdownText));
+                saveAnswer(markdownText, message);
+                var notice = document.createElement('p');
+                notice.className = 'stream-notice';
+                notice.setAttribute('role', 'status');
+                notice.textContent = message;
+                bubble.appendChild(notice);
+                if (follow) scrollToBottom(true);
+            } else {
+                if (bubble) bubble.parentElement.remove();
+                addSystemMessage(message);
+            }
+        }
+
+        function receive(data) {
+            if (finished) return;
+            if (data.type === 'start' || data.type === 'status') {
+                ensureBubble();
+                var status = bubble.querySelector('.stream-status');
+                if (status && data.stage === 'thinking') status.textContent = '正在整理思路…';
+            } else if (data.type === 'token') {
+                markdownText += data.content || '';
+                if (!pendingRender) pendingRender = requestAnimationFrame(paint);
+            } else if (data.type === 'done') {
+                var answer = typeof data.text === 'string' ? data.text : markdownText || htmlToPlainText(data.html || '');
+                if (!answer.trim()) { interrupt('未收到回答正文，请重试。'); return; }
+                var follow = isNearBottom();
+                finished = true;
+                if (pendingRender) cancelAnimationFrame(pendingRender);
+                clearTimeout(previewTimer);
+                ensureBubble().classList.remove('is-streaming');
+                bubble.replaceChildren(renderAnswerText(answer));
+                saveAnswer(answer);
+                if (follow) scrollToBottom(true);
+            } else if (data.type === 'error') {
+                interrupt('查询出错：' + (data.error || '连接中断，请重试。'));
+            }
+        }
+
         try {
-            var resp = await fetchWithTimeout('/api/query_stream', {
+            resetIdleTimer();
+            var resp = await fetch('/api/query_stream', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ question: text, history: history })
-            }, 30000);
+                body: JSON.stringify({ question: text, history: history }),
+                signal: controller.signal
+            });
 
             if (!resp.ok || !resp.body || !window.ReadableStream) {
+                await resp.body?.cancel();
+                clearTimeout(idleTimer);
+                clearTimeout(totalTimer);
                 await fetchNormalAnswer(text, conv, history);
             } else {
                 var reader = resp.body.getReader();
                 var decoder = new TextDecoder('utf-8');
                 var buffer = '';
-                var markdownText = '';
-                var bubble = null;
-                var hasStarted = false;
+                var dataLines = [];
 
-                // 按帧合并：无论一帧内来多少 token，只写一次 DOM
-                var pendingRender = false;
-                var renderedLength = 0;
-                var finished = false;
-
-                function flush() {
-                    pendingRender = false;
-                    // finished 之后不能再写，否则会覆盖 done 阶段渲染好的 HTML
-                    if (finished || !bubble || markdownText.length === renderedLength) return;
-                    renderedLength = markdownText.length;
-                    bubble.textContent = markdownText; // 流式阶段用纯文本，避免反复解析 HTML
-                    scrollToBottom();
+                function dispatch() {
+                    if (!dataLines.length) return;
+                    var payload = dataLines.join('\n');
+                    dataLines = [];
+                    receive(JSON.parse(payload));
                 }
 
-                function schedule() {
-                    if (pendingRender) return;
-                    pendingRender = true;
-                    requestAnimationFrame(flush);
+                function readLine(line) {
+                    if (!line) dispatch();
+                    else if (line.indexOf('data:') === 0) dataLines.push(line.slice(5).replace(/^ /, ''));
                 }
 
-                while (true) {
-                    var chunk = await reader.read();
-                    if (chunk.done) break;
-                    buffer += decoder.decode(chunk.value, { stream: true });
-                    var lines = buffer.split(/\r?\n/);
-                    buffer = lines.pop() || '';
-
-                    for (var li = 0; li < lines.length; li++) {
-                        var line = lines[li];
-                        if (line.indexOf('data: ') !== 0) continue;
-                        var payload = line.slice(6).trim();
-                        if (!payload) continue;
-
-                        var data;
-                        try { data = JSON.parse(payload); } catch (e) { continue; }
-
-                        if (data.type === 'start') {
-                            hasStarted = true;
-                            hideTyping();
-                            if (!bubble) bubble = createStreamingQisaoMessage();
-                        } else if (data.type === 'token') {
-                            hasStarted = true;
-                            if (!bubble) {
-                                hideTyping();
-                                bubble = createStreamingQisaoMessage();
-                            }
-                            if (renderedLength === 0) removeStreamLoading();
-                            markdownText += data.content || '';
-                            schedule();
-                        } else if (data.type === 'done') {
-                            hasStarted = true;
-                            finished = true;
-                            removeStreamLoading();
-                            var finalHtml = data.html || renderStreamingText(markdownText);
-                            if (!bubble) {
-                                hideTyping();
-                                bubble = createStreamingQisaoMessage();
-                            }
-                            bubble.classList.remove('is-streaming');
-                            bubble.innerHTML = finalHtml;
-                            conv.messages.push({ role: 'qisao', html: finalHtml });
-                            conv.updatedAt = Date.now();
-                            saveConversations();
-                            scrollToBottom(true);
-                        } else if (data.type === 'error') {
-                            finished = true;
-                            hideTyping();
-                            removeStreamLoading();
-                            addSystemMessage('查询出错: ' + (data.error || '未知错误'));
-                        }
+                function consume(value, atEnd) {
+                    buffer += value;
+                    var ending;
+                    while ((ending = /\r\n|\r|\n/.exec(buffer))) {
+                        if (!atEnd && ending[0] === '\r' && ending.index === buffer.length - 1) break;
+                        readLine(buffer.slice(0, ending.index));
+                        buffer = buffer.slice(ending.index + ending[0].length);
+                        if (finished) return;
                     }
+                    if (atEnd && !finished) { if (buffer) readLine(buffer); dispatch(); buffer = ''; }
                 }
 
-                if (!hasStarted) await fetchNormalAnswer(text, conv, history);
+                while (!finished) {
+                    var chunk = await reader.read();
+                    resetIdleTimer();
+                    if (chunk.done) { consume(decoder.decode(), true); break; }
+                    consume(decoder.decode(chunk.value, { stream: true }), false);
+                }
+                if (!finished) interrupt('连接中断，已保留收到的内容，请重试。');
+                await reader.cancel().catch(function () {});
             }
         } catch (err) {
-            hideTyping();
-            if (err.name === 'AbortError') {
-                addSystemMessage('请求超时，服务器响应过慢，请稍后重试');
-            } else {
-                try {
-                    await fetchNormalAnswer(text, conv, history);
-                } catch (fallbackErr) {
-                    hideTyping();
-                    addSystemMessage('网络错误，请检查网络连接后重试');
-                }
-            }
+            interrupt(err.name === 'AbortError' ? '响应超时，已保留收到的内容，请重试。' : '连接中断，已保留收到的内容，请检查网络后重试。');
+        } finally {
+            clearTimeout(idleTimer);
+            clearTimeout(totalTimer);
+            clearTimeout(previewTimer);
+            if (pendingRender) cancelAnimationFrame(pendingRender);
+            controller.abort();
         }
 
         isProcessing = false;
