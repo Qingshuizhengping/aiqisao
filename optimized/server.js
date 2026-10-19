@@ -35,7 +35,13 @@ function cacheFor(filePath) {
 app.get(/^\/(?!api\/).*/, (req, res, next) => {
     if (req.method !== 'GET' && req.method !== 'HEAD') return next();
 
-    let rel = decodeURIComponent(req.path);
+    let rel;
+    try {
+        rel = decodeURIComponent(req.path);
+    } catch {
+        return res.status(400).end();
+    }
+    if (rel.split(/[/\\]/).some(segment => segment.startsWith('.'))) return res.status(404).end();
     if (rel === '/' || rel === '') rel = '/index.html';
 
     const filePath = path.join(PUBLIC_DIR, path.normalize(rel));
