@@ -40,7 +40,7 @@
 
 4. **WebGL 延后、降频**。光场画布在 `load` 之后用 `requestIdleCallback` 加载，0.65×DPR 低分辨率渲染、30fps、页面不可见即停帧。低端机完全不会因为背景动画掉帧。
 
-5. **流式输出按帧合并**。原版每收到一个 token 就重写一次 `innerHTML`（触发解析 + 重排），现在把一帧内的 token 合并成一次 `textContent` 写入，结束时再渲染一次 HTML。长回答时 CPU 占用明显下降。
+5. **流式 Markdown 分段渲染**。已完成段落只解析一次，活动段落按 80ms 合并预览。浏览器与服务端使用同一份固定版本 Marked 安全渲染模块，原始 HTML 转义，链接协议受限。旧安装版仍能通过 `done.html` / 普通接口获得已排版答案。
 
 6. **滚动不再打架**。原版每帧强制 `scrollTop`，用户往上翻会被拽回底部；现在只在"本来就在底部"时才跟随。
 
@@ -48,7 +48,7 @@
 
 8. **服务端缓存与预压缩**。`server.js` 直接吐 build 阶段生成的 `.br/.gz`，按类型下发 `Cache-Control`，支持 `If-Modified-Since` 返回 304。原版是 `max-age=0`，每次访问都要重新下载全部资源。
 
-9. **Service Worker**。第二次打开直接走缓存（实测二次加载 38ms），断网也能出界面——这本来就是产品想要的"离线可用"。
+9. **Service Worker**。导航和未版本化主脚本优先联网，4 秒超时后回退缓存；版本化静态资源缓存优先，断网仍能查看界面和历史。接管 Service Worker 不等于替换正在执行的旧脚本，因此更新只提示、由用户主动确认，不会在输入或回答途中强制重载。
 
 ---
 
@@ -122,6 +122,12 @@ ssh root@8.134.141.217 "cd /path/to/ali-deploy && pm2 restart all"
 **回滚**：把 `public.bak.*` 换回去，`pm2 restart` 即可。
 
 **发版提醒**：改了前端后，把 `public/sw.js` 里的 `VERSION` 改一个值（如 `qisao-v2`），否则老用户可能还会读到缓存。
+
+前端 `CLIENT_VERSION`、HTML 主脚本查询参数和 SW 版本需同步。服务端必须一起部署 `public/static/js/markdown.mjs`，并保留 `public/THIRD_PARTY_NOTICES.txt`；不要覆盖线上 `api/_config.js`、环境密钥或 TLS 配置。
+
+旧会话会在回答末尾得到主动更新链接；点击前先保存未发送草稿，对话历史不会清除。新客户端的更新按钮会先保存草稿和当前会话，再加载新版。单纯发布网页不能替换已经安装 APK 的 Java 或内置 HTML。
+
+根目录 `node build_offline_html.js` 现在从已构建的 `optimized/public` 内联生成 APK 离线页，无需先安装 npm 依赖。内置离线页只读历史，明确提示联网返回在线版，不开放 `file:` 来源的 API 跨域。原有 debug APK 的签名证书可能与新构建不同，未核实签名前不要要求用户卸载重装或覆盖安装。
 
 ## 七、还没做 / 需要注意
 

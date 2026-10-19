@@ -8,13 +8,21 @@ import { createReadStream, statSync } from 'node:fs';
 import { once } from 'node:events';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { API_BASE, MODEL, MAX_TOKENS, TEMPERATURE, buildMessages, textToHtml, getApiKey } from './api/_config.js';
+import { API_BASE, MODEL, MAX_TOKENS, TEMPERATURE, buildMessages, getApiKey } from './api/_config.js';
+import { renderMarkdown } from './public/static/js/markdown.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC_DIR = path.join(__dirname, 'public');
 const app = express();
 const PORT = process.env.PORT || 3000;
+const CLIENT_VERSION = 'qisao-v20261019-3';
 const MODEL_REQUEST_OPTIONS = MODEL === 'zai-org/GLM-5.3-Flash' ? { reasoning_effort: 'low' } : {};
+
+function renderClientAnswer(content, clientVersion) {
+    const html = renderMarkdown(content);
+    if (clientVersion === CLIENT_VERSION) return html;
+    return html + '<p class="client-update"><a href="/?v=20261019-3">启用新版实时排版（请先保存草稿）</a><br><small>对话记录保留，无需重装。</small></p>';
+}
 
 app.disable('x-powered-by');
 app.use(express.json({ limit: '1mb' }));
@@ -25,6 +33,7 @@ app.use(express.json({ limit: '1mb' }));
 const CACHE_RULES = [
     { test: /manifest\.json$/i, value: 'public, max-age=0, must-revalidate' },
     { test: /[/\\]sw\.js$/i, value: 'public, max-age=0, must-revalidate' },
+    { test: /[/\\]app\.js$/i, value: 'public, max-age=0, must-revalidate' },
     { test: /\.(?:png|webp|jpg|jpeg|svg|ico)$/i, value: 'public, max-age=2592000' },
     { test: /\.(?:css|js|mjs)$/i, value: 'public, max-age=86400, stale-while-revalidate=604800' },
 ];
@@ -63,6 +72,7 @@ app.get(/^\/(?!api\/).*/, (req, res, next) => {
     const type = {
         '.html': 'text/html; charset=utf-8',
         '.js': 'text/javascript; charset=utf-8',
+        '.mjs': 'text/javascript; charset=utf-8',
         '.css': 'text/css; charset=utf-8',
         '.json': 'application/json; charset=utf-8',
         '.webp': 'image/webp',
@@ -108,7 +118,7 @@ app.get('/api/health', (req, res) => res.json({ status: 'ok', model: MODEL }));
 app.post('/api/query', async (req, res) => {
     const apiKey = getApiKey();
     if (!apiKey) return res.status(500).json({ status: 'error', error: '服务端未配置 SILICONFLOW_API_KEY 环境变量' });
-    const { question, history } = req.body || {};
+    const { question, history, clientVersion } = req.body || {};
     if (!question || !String(question).trim()) return res.status(400).json({ status: 'error', error: 'question 不能为空' });
     try {
         const resp = await fetch(API_BASE + '/chat/completions', {
@@ -122,7 +132,7 @@ app.post('/api/query', async (req, res) => {
         }
         const data = await resp.json();
         const content = (data.choices && data.choices[0] && data.choices[0].message && data.choices[0].message.content) || '';
-        return res.json({ status: 'ok', html: textToHtml(content) });
+        return res.json({ status: 'ok', text: content, html: renderClientAnswer(content, clientVersion) });
     } catch (e) {
         return res.status(500).json({ status: 'error', error: (e && e.message) || '内部错误' });
     }
@@ -132,7 +142,7 @@ app.post('/api/query', async (req, res) => {
 app.post('/api/query_stream', async (req, res) => {
     const apiKey = getApiKey();
     if (!apiKey) return res.status(500).json({ status: 'error', error: '服务端未配置 SILICONFLOW_API_KEY 环境变量' });
-    const { question, history } = req.body || {};
+    const { question, history, clientVersion } = req.body || {};
     if (!question || !String(question).trim()) return res.status(400).json({ status: 'error', error: 'question 不能为空' });
 
     res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
@@ -245,7 +255,7 @@ app.post('/api/query_stream', async (req, res) => {
         }
         if (!streamDone && !finished) throw new Error('AI连接提前结束，回答尚未完成，请重试');
         if (!full.trim()) throw new Error('AI服务未生成回答，请重试');
-        await write({ type: 'done', text: full, html: textToHtml(full) });
+        await write({ type: 'done', text: full, html: renderClientAnswer(full, clientVersion) });
         return res.end();
     } catch (e) {
         if (!res.destroyed && !res.writableEnded) {

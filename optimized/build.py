@@ -39,7 +39,7 @@ def run(cmd, **kw):
 def minify(src, out, loader):
     os.makedirs(os.path.dirname(out), exist_ok=True)
     # Windows 下 npx 是 .cmd，必须交给 shell 执行
-    cmd = f'npx --yes esbuild "{src}" --minify --target=es2019 --outfile="{out}"'
+    cmd = f'npx --yes esbuild "{src}" --bundle --minify --target=es2019 --outfile="{out}"'
     run(cmd)
     return out
 
@@ -68,6 +68,8 @@ def main():
 
     # 2. 压缩
     app_js = minify(os.path.join(SRC, "app.js"), os.path.join(PUBLIC, "static", "js", "app.js"), "js")
+    markdown_js = os.path.join(PUBLIC, "static", "js", "markdown.mjs")
+    run(f'npx --yes esbuild "{os.path.join(SRC, "markdown.js")}" --bundle --minify --format=esm --target=es2019 --outfile="{markdown_js}"')
     field_js = minify(os.path.join(SRC, "lightfield.js"), os.path.join(PUBLIC, "static", "js", "lightfield.js"), "js")
     css_out = minify(os.path.join(SRC, "styles.css"), os.path.join(ROOT, "build", "styles.min.css"), "css")
     css = open(css_out, encoding="utf-8").read()
@@ -77,11 +79,12 @@ def main():
     if "/*__STYLES__*/" not in html:
         raise SystemExit("index.html 里找不到 /*__STYLES__*/ 占位符")
     html = html.replace("/*__STYLES__*/", css)
+    shutil.copyfile(os.path.join(SRC, "vendor", "marked-18.0.9.LICENSE"), os.path.join(PUBLIC, "THIRD_PARTY_NOTICES.txt"))
     index_path = os.path.join(PUBLIC, "index.html")
     open(index_path, "w", encoding="utf-8", newline="\n").write(html)
 
     # 4. 预压缩（只压会走网络的文本资源）
-    for path in [index_path, app_js, field_js,
+    for path in [index_path, app_js, markdown_js, field_js,
                  os.path.join(PUBLIC, "sw.js"),
                  os.path.join(PUBLIC, "manifest.json")]:
         precompress(path)

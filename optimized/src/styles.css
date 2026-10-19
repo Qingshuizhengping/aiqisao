@@ -648,10 +648,15 @@ button, a { touch-action: manipulation; }
 .stream-tail.is-formatted { white-space: normal; }
 .stream-notice { color: var(--secondary); font-size: 12px; }
 .stream-status { margin-left: 8px; color: var(--secondary); font-size: 12px; }
+.client-update { color: var(--secondary); font-size: 12px; }
+.update-banner { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 8px 16px; padding: 8px 16px; color: var(--secondary); font-size: 12px; }
+.update-banner[hidden] { display: none; }
+.update-banner button { min-height: 44px; padding: 6px 16px; border: 1px solid var(--glass-hair); border-radius: 24px; background: var(--glass-fill-strong); color: var(--ink); cursor: pointer; }
+.update-banner button:disabled { opacity: .55; cursor: wait; }
 .qisao-bubble.is-streaming .stream-loading { white-space: normal; }
-.qisao-bubble h2 { margin: 20px 0 10px; font-size: 18px; font-weight: 600; line-height: 1.5; letter-spacing: -.2px; }
+.qisao-bubble h1, .qisao-bubble h2 { margin: 20px 0 10px; font-size: 18px; font-weight: 600; line-height: 1.5; letter-spacing: -.2px; }
 .qisao-bubble h3 { margin: 18px 0 8px; font-size: 15.5px; font-weight: 600; line-height: 1.5; }
-.qisao-bubble h4 { margin: 16px 0 6px; font-size: 14px; font-weight: 600; }
+.qisao-bubble h4, .qisao-bubble h5, .qisao-bubble h6 { margin: 16px 0 6px; font-size: 14px; font-weight: 600; }
 .qisao-bubble p { margin: 8px 0; }
 .qisao-bubble ul, .qisao-bubble ol { margin: 8px 0; padding-left: 21px; }
 .qisao-bubble li { margin: 4px 0; }

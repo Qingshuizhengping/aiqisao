@@ -3,13 +3,10 @@ package com.weizhiyu.aiqisao;
 import android.os.Bundle;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
-import android.webkit.WebViewClient;
 import android.webkit.WebResourceError;
 import android.webkit.WebResourceRequest;
-import android.net.ConnectivityManager;
-import android.net.NetworkInfo;
-import android.content.Context;
 import com.getcapacitor.BridgeActivity;
+import com.getcapacitor.BridgeWebViewClient;
 
 public class MainActivity extends BridgeActivity {
 
@@ -42,18 +39,15 @@ public class MainActivity extends BridgeActivity {
             // 缓存：有网时正常加载，离线时用缓存
             settings.setCacheMode(WebSettings.LOAD_DEFAULT);
 
-            // 设置 WebViewClient 处理加载错误
-            webView.setWebViewClient(new WebViewClient() {
+            webView.setWebViewClient(new BridgeWebViewClient(getBridge()) {
                 @Override
                 public void onReceivedError(WebView view, WebResourceRequest request, WebResourceError error) {
-                    // 加载本地离线页面
-                    view.loadUrl("file:///android_asset/public/index.html");
-                }
-
-                @Override
-                public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
-                    // 让所有链接都在 WebView 内打开
-                    return false;
+                    super.onReceivedError(view, request, error);
+                    if (request.isForMainFrame()
+                            && "https".equals(request.getUrl().getScheme())
+                            && "8.134.141.217".equals(request.getUrl().getHost())) {
+                        view.loadUrl("file:///android_asset/public/index.html");
+                    }
                 }
             });
         }

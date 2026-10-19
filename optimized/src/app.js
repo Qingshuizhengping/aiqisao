@@ -8,6 +8,8 @@
  *  5. 玻璃光泽跟随指针（rAF 节流），不再用 canvas 逐像素算折射图
  *  6. 主题切换 + 离线提示 + 光场按需加载
  */
+import { renderMarkdown } from './markdown.js';
+
 (function () {
     'use strict';
 
@@ -31,6 +33,10 @@
     var conversations = [];
     var currentConvId = null;
     var STORAGE_KEY = 'qisao_conversations';
+    var CLIENT_VERSION = 'qisao-v20261019-3';
+    var DRAFT_KEY = 'qisao_update_draft';
+    var updateBanner = document.getElementById('updateBanner');
+    var updateAppBtn = document.getElementById('updateAppBtn');
 
     /* ------------------------------ 主题 ------------------------------ */
     function updateMetaTheme(theme) {
@@ -173,7 +179,7 @@
                 div.className = 'message message-qisao';
                 div.innerHTML = qisaoMessageMarkup('');
                 var savedBubble = div.querySelector('.qisao-bubble');
-                savedBubble.appendChild(renderAnswerText(msg.text || htmlToPlainText(msg.html || '')));
+                savedBubble.appendChild(renderAnswerText(msg.text || htmlToMarkdown(msg.html || '')));
                 if (msg.incomplete) {
                     var savedNotice = document.createElement('p');
                     savedNotice.className = 'stream-notice';
@@ -356,115 +362,10 @@
         return container.innerHTML;
     }
 
-    function appendInline(container, text) {
-        var pattern = /(`[^`\n]+`|\*\*[^*\n]+\*\*|__[^_\n]+__|\*[^*\n]+\*|_[^_\n]+_|\[[^\]\n]+\]\([^\s)]+\))/g;
-        var offset = 0;
-        var match;
-        while ((match = pattern.exec(text))) {
-            container.appendChild(document.createTextNode(text.slice(offset, match.index)));
-            var token = match[0];
-            var element;
-            if (token[0] === '`') {
-                element = document.createElement('code');
-                element.textContent = token.slice(1, -1);
-            } else if (token.slice(0, 2) === '**' || token.slice(0, 2) === '__') {
-                element = document.createElement('strong');
-                element.textContent = token.slice(2, -2);
-            } else if (token[0] === '[') {
-                var link = /^\[([^\]]+)\]\(([^)]+)\)$/.exec(token);
-                try {
-                    var url = new URL(link[2], location.origin);
-                    if (!/^(https?:|mailto:)$/.test(url.protocol)) throw new Error('Unsafe link');
-                    element = document.createElement('a');
-                    element.href = url.href;
-                    element.rel = 'noopener noreferrer';
-                    element.target = '_blank';
-                    element.textContent = link[1];
-                } catch (error) {
-                    element = document.createTextNode(token);
-                }
-            } else {
-                element = document.createElement('em');
-                element.textContent = token.slice(1, -1);
-            }
-            container.appendChild(element);
-            offset = match.index + token.length;
-        }
-        container.appendChild(document.createTextNode(text.slice(offset)));
-    }
-
     function renderAnswerText(text) {
-        var fragment = document.createDocumentFragment();
-        var lines = String(text || '').replace(/\r\n?/g, '\n').split('\n');
-        var position = 0;
-        function isBlock(line) { return /^\s*(?:#{1,6}\s|[-+*]\s|\d+[.)]\s|>|`{3,}|~{3,}|(?:-{3,}|\*{3,}|_{3,})\s*$)/.test(line); }
-        function cells(line) { return line.trim().replace(/^\|/, '').replace(/\|$/, '').split('|').map(function (cell) { return cell.trim(); }); }
-        while (position < lines.length) {
-            var line = lines[position];
-            if (!line.trim()) { position++; continue; }
-            var fence = /^\s*(`{3,}|~{3,})(.*)$/.exec(line);
-            var heading = /^\s*(#{1,6})\s+(.+)$/.exec(line);
-            var list = /^\s*([-+*]|\d+[.)])\s+(.+)$/.exec(line);
-            var element;
-            if (fence) {
-                element = document.createElement('pre');
-                var code = document.createElement('code');
-                var codeLines = [];
-                position++;
-                while (position < lines.length && !new RegExp('^\\s*' + fence[1][0] + '{' + fence[1].length + ',}\\s*$').test(lines[position])) codeLines.push(lines[position++]);
-                code.textContent = codeLines.join('\n');
-                element.appendChild(code);
-                if (position < lines.length) position++;
-            } else if (heading) {
-                element = document.createElement('h' + Math.min(heading[1].length + 1, 4));
-                appendInline(element, heading[2]);
-                position++;
-            } else if (/^\s*(?:-{3,}|\*{3,}|_{3,})\s*$/.test(line)) {
-                element = document.createElement('hr');
-                position++;
-            } else if (list) {
-                var ordered = /^\d/.test(list[1]);
-                element = document.createElement(ordered ? 'ol' : 'ul');
-                if (ordered) element.start = parseInt(list[1], 10);
-                while (position < lines.length) {
-                    var item = /^\s*([-+*]|\d+[.)])\s+(.+)$/.exec(lines[position]);
-                    if (!item || /^\d/.test(item[1]) !== ordered) break;
-                    var listItem = document.createElement('li');
-                    appendInline(listItem, item[2]);
-                    element.appendChild(listItem);
-                    position++;
-                }
-            } else if (/^\s*>/.test(line)) {
-                element = document.createElement('blockquote');
-                while (position < lines.length && /^\s*>/.test(lines[position])) {
-                    if (element.childNodes.length) element.appendChild(document.createElement('br'));
-                    appendInline(element, lines[position++].replace(/^\s*>\s?/, ''));
-                }
-            } else if (line.includes('|') && position + 1 < lines.length && cells(lines[position + 1]).every(function (cell) { return /^:?-{3,}:?$/.test(cell); })) {
-                element = document.createElement('table');
-                var tableHead = document.createElement('thead');
-                var headerRow = document.createElement('tr');
-                cells(line).forEach(function (cell) { var header = document.createElement('th'); appendInline(header, cell); headerRow.appendChild(header); });
-                tableHead.appendChild(headerRow);
-                element.appendChild(tableHead);
-                var tableBody = document.createElement('tbody');
-                position += 2;
-                while (position < lines.length && lines[position].includes('|') && lines[position].trim()) {
-                    var row = document.createElement('tr');
-                    cells(lines[position++]).forEach(function (cell) { var entry = document.createElement('td'); appendInline(entry, cell); row.appendChild(entry); });
-                    tableBody.appendChild(row);
-                }
-                element.appendChild(tableBody);
-            } else {
-                element = document.createElement('p');
-                do {
-                    if (element.childNodes.length) element.appendChild(document.createElement('br'));
-                    appendInline(element, lines[position++]);
-                } while (position < lines.length && lines[position].trim() && !isBlock(lines[position]) && !(lines[position].includes('|') && position + 1 < lines.length && cells(lines[position + 1]).every(function (cell) { return /^:?-{3,}:?$/.test(cell); })));
-            }
-            fragment.appendChild(element);
-        }
-        return fragment;
+        var template = document.createElement('template');
+        template.innerHTML = renderMarkdown(text);
+        return template.content;
     }
 
     function addSystemMessage(text) {
@@ -508,10 +409,36 @@
 
     function htmlToPlainText(html) {
         var documentBody = new DOMParser().parseFromString(html || '', 'text/html').body;
-        documentBody.querySelectorAll('script, style, iframe, object, embed').forEach(function (element) { element.remove(); });
+        documentBody.querySelectorAll('script, style, iframe, object, embed, .client-update').forEach(function (element) { element.remove(); });
         documentBody.querySelectorAll('br').forEach(function (element) { element.replaceWith('\n'); });
         documentBody.querySelectorAll('p, div, li, h1, h2, h3, h4, blockquote, pre, tr').forEach(function (element) { element.appendChild(document.createTextNode('\n')); });
         return documentBody.textContent.trim();
+    }
+
+    function htmlToMarkdown(html) {
+        var body = new DOMParser().parseFromString(html || '', 'text/html').body;
+        body.querySelectorAll('script, style, iframe, object, embed, .client-update').forEach(function (element) { element.remove(); });
+        function convert(node) {
+            if (node.nodeType === 3) return node.textContent;
+            if (node.nodeType !== 1) return '';
+            var tag = node.tagName.toLowerCase();
+            var content = Array.from(node.childNodes).map(convert).join('');
+            if (tag === 'br') return '\n';
+            if (tag === 'pre' || tag === 'code') {
+                var text = node.textContent;
+                var runs = text.match(/`+/g) || [];
+                var marker = '`'.repeat(Math.max(tag === 'pre' ? 3 : 1, ...runs.map(function (run) { return run.length + 1; })));
+                return tag === 'pre' ? '\n\n' + marker + '\n' + text + '\n' + marker + '\n\n' : marker + ' ' + text + ' ' + marker;
+            }
+            if (tag === 'strong' || tag === 'b') return '**' + content + '**';
+            if (tag === 'em' || tag === 'i') return '*' + content + '*';
+            if (/^h[1-6]$/.test(tag)) return '\n\n' + '#'.repeat(Number(tag[1])) + ' ' + content + '\n\n';
+            if (tag === 'li') return '\n' + (node.parentElement.tagName === 'OL' ? (Array.from(node.parentElement.children).indexOf(node) + 1) + '. ' : '- ') + content.trim();
+            if (tag === 'blockquote') return '\n\n' + content.trim().split('\n').map(function (line) { return '> ' + line; }).join('\n') + '\n\n';
+            if (/^(p|div|ul|ol|table|tr)$/.test(tag)) return '\n\n' + content.trim() + '\n\n';
+            return content;
+        }
+        return Array.from(body.childNodes).map(convert).join('').trim();
     }
 
     function buildConversationContext(conv) {
@@ -536,7 +463,7 @@
             var resp = await fetch('/api/query', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ question: text, history: history || [] }),
+                body: JSON.stringify({ question: text, history: history || [], clientVersion: CLIENT_VERSION }),
                 signal: controller.signal
             });
             data = await resp.json();
@@ -567,6 +494,7 @@
 
         isProcessing = true;
         sendBtn.disabled = true;
+        if (updateAppBtn) updateAppBtn.disabled = true;
         document.querySelectorAll('.quick-btn, .new-chat-btn').forEach(function (button) { button.disabled = true; });
         mainPanel.setAttribute('aria-busy', 'true');
         userInput.value = '';
@@ -709,7 +637,7 @@
             var resp = await fetch('/api/query_stream', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ question: text, history: history }),
+                body: JSON.stringify({ question: text, history: history, clientVersion: CLIENT_VERSION }),
                 signal: controller.signal
             });
 
@@ -769,6 +697,7 @@
 
         isProcessing = false;
         sendBtn.disabled = false;
+        if (updateAppBtn) updateAppBtn.disabled = false;
         document.querySelectorAll('.quick-btn, .new-chat-btn').forEach(function (button) { button.disabled = false; });
         mainPanel.setAttribute('aria-busy', 'false');
         renderSidebar(true);
@@ -805,7 +734,51 @@
         if (!('serviceWorker' in navigator)) return;
         var secure = location.protocol === 'https:' || location.hostname === 'localhost' || location.hostname === '127.0.0.1';
         if (!secure) return;
-        navigator.serviceWorker.register('/sw.js').catch(function () {});
+        function checkVersion() {
+            var worker = navigator.serviceWorker.controller;
+            if (!worker || !window.MessageChannel) return;
+            var channel = new MessageChannel();
+            var timer = setTimeout(function () { channel.port1.close(); }, 2000);
+            channel.port1.onmessage = function (event) {
+                clearTimeout(timer);
+                channel.port1.close();
+                if (event.data && event.data.type === 'QISAO_VERSION' && event.data.version !== CLIENT_VERSION && updateBanner) updateBanner.hidden = false;
+            };
+            worker.postMessage({ type: 'QISAO_VERSION' }, [channel.port2]);
+        }
+        navigator.serviceWorker.addEventListener('controllerchange', checkVersion);
+        navigator.serviceWorker.register('/sw.js', { updateViaCache: 'none' }).then(function (registration) {
+            checkVersion();
+            window.addEventListener('online', function () { registration.update().catch(function () {}); });
+            document.addEventListener('visibilitychange', function () {
+                if (!document.hidden) registration.update().catch(function () {});
+            });
+        }).catch(function () {});
+    }
+
+    function updateApp() {
+        if (isProcessing) return;
+        try {
+            sessionStorage.setItem(DRAFT_KEY, JSON.stringify({ text: userInput.value, conversationId: currentConvId }));
+        } catch (error) {
+            if (updateBanner) updateBanner.querySelector('span').textContent = '无法保存草稿，请先复制草稿再重新打开应用。';
+            return;
+        }
+        var url = new URL(location.href);
+        url.searchParams.set('v', Date.now().toString(36));
+        location.replace(url.href);
+    }
+
+    function restoreUpdateDraft() {
+        try {
+            var saved = JSON.parse(sessionStorage.getItem(DRAFT_KEY) || 'null');
+            if (!saved) return;
+            if (saved.conversationId) switchChat(saved.conversationId);
+            else newChat();
+            userInput.value = typeof saved.text === 'string' ? saved.text : '';
+            userInput.dispatchEvent(new Event('input'));
+            sessionStorage.removeItem(DRAFT_KEY);
+        } catch (error) {}
     }
 
     function loadLightField() {
@@ -890,6 +863,9 @@
         } else {
             newChat();
         }
+
+        restoreUpdateDraft();
+        if (updateAppBtn) updateAppBtn.addEventListener('click', updateApp);
 
         if (document.readyState === 'complete') {
             setTimeout(loadLightField, 300);

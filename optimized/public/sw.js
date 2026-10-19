@@ -2,18 +2,19 @@
  * AI 七嫂 · Service Worker
  *
  * 目的：第二次打开（以及断网时）直接出界面，不用再等服务器。
- * - 导航请求：stale-while-revalidate —— 先用缓存秒开，同时后台取新版
- * - 静态资源：cache-first
+ * - 导航及未版本化主脚本：network-first，4 秒后回退缓存
+ * - 其余静态资源：cache-first
  * - /api/：完全不碰，避免把回答缓存住
  *
  * 发版时把 VERSION 改掉即可强制刷新缓存。
  */
-var VERSION = 'qisao-v20261019-2';
+var VERSION = 'qisao-v20261019-3';
 
 var PRECACHE = [
     '/',
     '/static/js/app.js',
-    '/static/js/app.js?v=20261019-2',
+    '/static/js/app.js?v=20261019-3',
+    '/static/js/markdown.mjs',
     '/static/js/lightfield.js',
     '/static/img/avatar-192.webp',
     '/static/img/avatar-96.webp',
@@ -45,30 +46,37 @@ self.addEventListener('activate', function (event) {
     );
 });
 
+self.addEventListener('message', function (event) {
+    if (!event.data || event.data.type !== 'QISAO_VERSION') return;
+    var reply = { type: 'QISAO_VERSION', version: VERSION };
+    if (event.ports && event.ports[0]) event.ports[0].postMessage(reply);
+    else if (event.source) event.source.postMessage(reply);
+});
+
 function isNavigation(request) {
     if (request.mode === 'navigate') return true;
     var accept = request.headers.get('accept') || '';
     return accept.indexOf('text/html') !== -1;
 }
 
-async function staleWhileRevalidate(request) {
+async function networkFirst(request, navigation) {
     var cache = await caches.open(VERSION);
-    var cached = await cache.match(request);
-
-    var network = fetch(request).then(function (response) {
-        if (response && response.ok && response.type === 'basic') {
-            cache.put(request, response.clone());
+    var controller = new AbortController();
+    var timer = setTimeout(function () { controller.abort(); }, 4000);
+    try {
+        var response = await fetch(request, { cache: 'no-cache', signal: controller.signal });
+        if (response.ok && response.type === 'basic') {
+            await cache.put(request, response.clone()).catch(function () {});
         }
         return response;
-    }).catch(function () { return null; });
-
-    if (cached) {
-        network.catch(function () {});
-        return cached;
+    } catch (error) {
+    } finally {
+        clearTimeout(timer);
     }
 
-    var response = await network;
-    if (response) return response;
+    var cached = await cache.match(request);
+    if (cached) return cached;
+    if (!navigation) return new Response('', { status: 503, statusText: 'Service Unavailable' });
 
     var shell = await cache.match('/');
     return shell || new Response(
@@ -96,9 +104,15 @@ self.addEventListener('fetch', function (event) {
     var url = new URL(request.url);
     if (url.origin !== self.location.origin) return;
     if (url.pathname.indexOf('/api/') === 0) return;
+    if (url.pathname === '/release.json') return;
 
     if (isNavigation(request)) {
-        event.respondWith(staleWhileRevalidate(request));
+        event.respondWith(networkFirst(request, true));
+        return;
+    }
+
+    if (url.pathname === '/static/js/app.js' && !url.search) {
+        event.respondWith(networkFirst(request, false));
         return;
     }
 
