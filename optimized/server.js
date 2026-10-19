@@ -18,10 +18,13 @@ app.disable('x-powered-by');
 app.use(express.json({ limit: '1mb' }));
 
 // ---------- 静态资源：预压缩 + 分类缓存 ----------
+// 顺序即优先级：sw.js / manifest 必须排在 .js 之前，否则会被当成普通脚本缓存一天，
+// 导致发版后老用户迟迟拿不到新版本。
 const CACHE_RULES = [
+    { test: /manifest\.json$/i, value: 'public, max-age=0, must-revalidate' },
+    { test: /[/\\]sw\.js$/i, value: 'public, max-age=0, must-revalidate' },
     { test: /\.(?:png|webp|jpg|jpeg|svg|ico)$/i, value: 'public, max-age=2592000' },
     { test: /\.(?:css|js|mjs)$/i, value: 'public, max-age=86400, stale-while-revalidate=604800' },
-    { test: /manifest\.json$|sw\.js$/i, value: 'public, max-age=0, must-revalidate' },
 ];
 
 function cacheFor(filePath) {
