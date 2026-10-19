@@ -61,6 +61,7 @@ app.get(/^\/(?!api\/).*/, (req, res, next) => {
         '.png': 'image/png',
         '.svg': 'image/svg+xml',
         '.ico': 'image/x-icon',
+        '.apk': 'application/vnd.android.package-archive',
     }[ext] || 'application/octet-stream';
 
     res.setHeader('Content-Type', type);

@@ -8,7 +8,7 @@
  *
  * 发版时把 VERSION 改掉即可强制刷新缓存。
  */
-var VERSION = 'qisao-v1';
+var VERSION = 'qisao-v20261019-1';
 
 var PRECACHE = [
     '/',
@@ -37,7 +37,7 @@ self.addEventListener('activate', function (event) {
     event.waitUntil(
         caches.keys()
             .then(function (keys) {
-                return Promise.all(keys.filter(function (key) { return key !== VERSION; })
+                return Promise.all(keys.filter(function (key) { return key.indexOf('qisao-') === 0 && key !== VERSION; })
                     .map(function (key) { return caches.delete(key); }));
             })
             .then(function () { return self.clients.claim(); })

@@ -823,10 +823,10 @@ button, a { touch-action: manipulation; }
     }
 
     .sidebar.open { transform: translateX(0); visibility: visible; }
-    .sidebar .sidebar-close { display: inline-flex; width: 42px; height: 42px; }
+    .sidebar .sidebar-close { display: inline-flex; width: 44px; height: 44px; }
     .brand-wordmark strong { font-size: 16px; }
     .new-chat-btn { margin-top: 26px; }
-    .chat-item-delete { width: 42px; height: 42px; opacity: 1; }
+    .chat-item-delete { width: 44px; height: 44px; opacity: 1; }
     .chat-item-select { min-height: 64px; }
     .chat-item-title { font-size: 14px; }
     .chat-item-date { font-size: 11px; }
@@ -852,12 +852,12 @@ button, a { touch-action: manipulation; }
 
     .main { width: 100%; }
     .header { gap: 10px; min-height: calc(68px + env(safe-area-inset-top, 0px)); padding: calc(14px + env(safe-area-inset-top, 0px)) 18px 10px; }
-    .menu-btn { display: inline-flex; width: 42px; height: 42px; }
+    .menu-btn { display: inline-flex; width: 44px; height: 44px; }
     .header-info { gap: 9px; }
     .header-info h1 { font-size: 15px; }
     .header-info p { font-size: 11px; }
     .header-badge { display: none; }
-    .theme-toggle { width: 38px; height: 38px; margin-left: auto; }
+    .theme-toggle { width: 44px; height: 44px; margin-left: auto; }
 
     .main.is-welcome .conversation-workspace { padding-bottom: 14px; }
     .chat-container { padding: 14px 18px 10px; }
@@ -874,10 +874,10 @@ button, a { touch-action: manipulation; }
     .composer-context { font-size: 10px; padding-left: 10px; }
     .keyboard-hint { display: none; }
     .keyboard-hint + .send-btn { margin-left: auto; }
-    .send-btn { width: 42px; height: 42px; }
+    .send-btn { width: 44px; height: 44px; }
     .quick-section { flex-direction: column; gap: 11px; margin-top: 20px; }
     .quick-buttons { gap: 8px; max-width: 330px; }
-    .quick-btn { min-height: 40px; padding: 9px 17px; }
+    .quick-btn { min-height: 44px; padding: 9px 17px; }
     .input-note { margin-top: 15px; font-size: 11px; }
     .brand-note { padding: 0 24px calc(18px + env(safe-area-inset-bottom, 0px)); }
     .brand-note span { display: block; margin: 2px 0 0; }
@@ -890,7 +890,7 @@ button, a { touch-action: manipulation; }
     .main:not(.is-welcome) .quick-section { flex-direction: row; justify-content: flex-start; margin-top: 12px; }
     .main:not(.is-welcome) .quick-label { display: none; }
     .main:not(.is-welcome) .quick-buttons { flex-wrap: nowrap; justify-content: flex-start; width: 100%; max-width: none; overflow-x: auto; padding: 2px 1px 4px; scrollbar-width: none; }
-    .main:not(.is-welcome) .quick-btn { flex: 0 0 auto; min-height: 40px; padding: 8px 14px; }
+    .main:not(.is-welcome) .quick-btn { flex: 0 0 auto; min-height: 44px; padding: 8px 14px; }
     .main:not(.is-welcome) .input-box textarea { min-height: 42px; }
     .main:not(.is-welcome) .input-note { margin-top: 8px; }
     .offline-banner { margin-left: 18px; margin-right: 18px; }
