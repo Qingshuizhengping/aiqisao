@@ -1,0 +1,253 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="light">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AI 七嫂 · 前端优化报告</title>
+<script>
+(function () {
+    var t = 'light';
+    try { var s = localStorage.getItem('report_theme'); t = (s === 'dark' || s === 'light') ? s : (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'); } catch (e) {}
+    document.documentElement.dataset.theme = t;
+})();
+</script>
+<style>
+:root {
+    color-scheme: light;
+    --bg: #ffffff;
+    --ink: #14161c;
+    --sub: #5b6474;
+    --muted: #8a92a1;
+    --line: rgba(15, 20, 32, .09);
+    --glass: rgba(250, 252, 255, .72);
+    --accent: #4a6741;
+    --accent-2: #8fae7d;
+    --bad: #b0543f;
+    --shadow: 0 0 0 .5px rgba(15, 20, 32, .05), 0 1px 2px rgba(15, 20, 32, .04), 0 18px 40px -28px rgba(15, 20, 32, .22);
+}
+[data-theme="dark"] {
+    color-scheme: dark;
+    --bg: #08090b;
+    --ink: #eef1f6;
+    --sub: #9ba3b3;
+    --muted: #6f7787;
+    --line: rgba(255, 255, 255, .1);
+    --glass: rgba(255, 255, 255, .055);
+    --accent: #8fae7d;
+    --accent-2: #5f7a4f;
+    --bad: #e0738a;
+    --shadow: 0 0 0 .5px rgba(255, 255, 255, .07), 0 1px 2px rgba(0, 0, 0, .5), 0 18px 40px -28px rgba(0, 0, 0, .9);
+}
+* { box-sizing: border-box; }
+body {
+    margin: 0;
+    padding: 56px 24px 80px;
+    background: var(--bg);
+    color: var(--ink);
+    font: 14px/1.75 -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+    -webkit-font-smoothing: antialiased;
+    transition: background-color .35s ease, color .35s ease;
+}
+.wrap { max-width: 900px; margin: 0 auto; }
+header { display: flex; align-items: flex-start; gap: 16px; margin-bottom: 44px; }
+.eyebrow { display: block; color: var(--muted); font-size: 11px; letter-spacing: 2px; margin-bottom: 12px; }
+h1 { margin: 0 0 10px; font-size: 30px; line-height: 1.35; letter-spacing: -.8px; font-weight: 600; }
+.lead { margin: 0; color: var(--sub); font-size: 14px; max-width: 620px; }
+.toggle {
+    margin-left: auto; flex: 0 0 auto; width: 42px; height: 42px; border-radius: 50%;
+    border: 1px solid var(--line); background: var(--glass); color: var(--sub);
+    cursor: pointer; font-size: 15px; line-height: 1; display: grid; place-items: center;
+    transition: background-color .2s, color .2s;
+}
+.toggle:hover { color: var(--ink); }
+
+.hero { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; margin-bottom: 44px; }
+.stat { padding: 22px 22px 20px; border: 1px solid var(--line); border-radius: 18px; background: var(--glass); box-shadow: var(--shadow); }
+.stat b { display: block; font-size: 32px; font-weight: 600; letter-spacing: -1.2px; line-height: 1.1; color: var(--accent); font-variant-numeric: tabular-nums; }
+.stat span { display: block; margin-top: 8px; color: var(--sub); font-size: 12px; }
+.stat em { display: block; margin-top: 2px; color: var(--muted); font-size: 11px; font-style: normal; }
+
+h2 { margin: 48px 0 18px; font-size: 17px; font-weight: 600; letter-spacing: -.2px; }
+h2 span { color: var(--muted); font-weight: 400; font-size: 12px; margin-left: 10px; letter-spacing: 0; }
+
+.card { padding: 22px 24px; border: 1px solid var(--line); border-radius: 18px; background: var(--glass); box-shadow: var(--shadow); }
+
+table { width: 100%; border-collapse: collapse; font-size: 13px; }
+th, td { padding: 11px 10px; text-align: left; border-bottom: 1px solid var(--line); font-variant-numeric: tabular-nums; }
+th { color: var(--muted); font-weight: 500; font-size: 11px; letter-spacing: .4px; }
+tr:last-child td { border-bottom: 0; }
+td.num, th.num { text-align: right; }
+.delta { color: var(--accent); font-weight: 600; }
+.bad { color: var(--bad); }
+
+.bars { margin-top: 4px; }
+.bar-row { display: grid; grid-template-columns: 112px 1fr 78px; align-items: center; gap: 14px; margin-bottom: 12px; font-size: 12px; }
+.bar-row .label { color: var(--sub); }
+.bar-track { position: relative; height: 26px; border-radius: 8px; background: rgba(15, 20, 32, .045); overflow: hidden; }
+[data-theme="dark"] .bar-track { background: rgba(255, 255, 255, .06); }
+.bar-fill { position: absolute; inset: 0 auto 0 0; border-radius: 8px; background: linear-gradient(90deg, rgba(74, 103, 65, .55), rgba(74, 103, 65, .3)); }
+[data-theme="dark"] .bar-fill { background: linear-gradient(90deg, rgba(143, 174, 125, .6), rgba(143, 174, 125, .3)); }
+.bar-val { text-align: right; color: var(--sub); font-variant-numeric: tabular-nums; }
+
+ol.steps { margin: 0; padding-left: 0; list-style: none; counter-reset: s; }
+ol.steps li { position: relative; padding: 0 0 20px 40px; border-left: 1px solid var(--line); margin-left: 12px; }
+ol.steps li:last-child { border-left-color: transparent; padding-bottom: 0; }
+ol.steps li::before {
+    counter-increment: s; content: counter(s, decimal-leading-zero);
+    position: absolute; left: -14px; top: -2px; width: 28px; height: 28px; border-radius: 50%;
+    display: grid; place-items: center; font-size: 10px; font-variant-numeric: tabular-nums;
+    background: var(--bg); border: 1px solid var(--line); color: var(--muted);
+}
+ol.steps strong { display: block; font-weight: 600; margin-bottom: 3px; }
+ol.steps p { margin: 0; color: var(--sub); font-size: 13px; }
+code { font-family: ui-monospace, "Cascadia Code", Menlo, monospace; font-size: .92em; background: rgba(15, 20, 32, .05); padding: 2px 6px; border-radius: 5px; }
+[data-theme="dark"] code { background: rgba(255, 255, 255, .08); }
+pre { margin: 14px 0 0; padding: 16px 18px; border-radius: 14px; background: #1d2027; color: #e8ecf4; overflow-x: auto; font-size: 12px; line-height: 1.85; }
+pre code { background: none; padding: 0; color: inherit; }
+
+.note { margin-top: 14px; padding: 14px 16px; border-radius: 12px; border: 1px solid var(--line); background: rgba(176, 142, 60, .06); color: var(--sub); font-size: 12.5px; }
+.note strong { color: var(--ink); }
+
+.layers { display: grid; gap: 10px; margin-top: 6px; }
+.layer { display: grid; grid-template-columns: 30px 1fr; gap: 14px; align-items: start; padding: 14px 16px; border-radius: 12px; border: 1px solid var(--line); }
+.layer i { display: grid; place-items: center; width: 26px; height: 26px; border-radius: 50%; background: rgba(74, 103, 65, .1); color: var(--accent); font-style: normal; font-size: 11px; font-weight: 600; }
+[data-theme="dark"] .layer i { background: rgba(143, 174, 125, .14); }
+.layer b { display: block; font-size: 13px; font-weight: 600; }
+.layer span { color: var(--sub); font-size: 12.5px; }
+
+footer { margin-top: 56px; padding-top: 22px; border-top: 1px solid var(--line); color: var(--muted); font-size: 11.5px; display: flex; gap: 12px; flex-wrap: wrap; }
+
+@media (max-width: 720px) {
+    body { padding: 32px 18px 60px; }
+    h1 { font-size: 24px; }
+    .hero { grid-template-columns: 1fr; }
+    .stat b { font-size: 28px; }
+    .bar-row { grid-template-columns: 74px 1fr 64px; gap: 10px; }
+    header { flex-wrap: wrap; }
+}
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+    <header>
+        <div>
+            <span class="eyebrow">薇之雨 · AI 七嫂</span>
+            <h1>前端性能与首屏加载优化报告</h1>
+            <p class="lead">在不动原有文件的前提下重做一份前端：首屏传输从 1.29 MB 降到 26.8 KB，FCP 快一半，同时换成纯白玻璃质感并加入深色模式。</p>
+        </div>
+        <button class="toggle" id="toggle" type="button" aria-label="切换深色模式">◐</button>
+    </header>
+
+    <div class="hero">
+        <div class="stat"><b>−94.9%</b><span>首屏传输体积</span><em>1,351 KB → 69.4 KB（未压缩实测）</em></div>
+        <div class="stat"><b>−50.6%</b><span>FCP 首次内容绘制</span><em>1012 ms → 500 ms</em></div>
+        <div class="stat"><b>15 → 4</b><span>首屏请求数</span><em>CSS 内联、JS 合并、光场延后</em></div>
+    </div>
+
+    <h2>实测数据 <span>Slow 4G · 4× CPU 降速 · 缓存关闭 · 3 次中位数</span></h2>
+    <div class="card">
+        <table>
+            <thead>
+                <tr><th>指标</th><th class="num">原版</th><th class="num">优化版</th><th class="num">变化</th></tr>
+            </thead>
+            <tbody>
+                <tr><td>首屏请求数</td><td class="num">15</td><td class="num">4</td><td class="num delta">−73.3%</td></tr>
+                <tr><td>传输体积（未压缩）</td><td class="num bad">1,351,277 B</td><td class="num">69,421 B</td><td class="num delta">−94.9%</td></tr>
+                <tr><td>传输体积（brotli 后）</td><td class="num bad">≈ 1.30 MB</td><td class="num">≈ 26.8 KB</td><td class="num delta">−97.9%</td></tr>
+                <tr><td>FCP 首次内容绘制</td><td class="num bad">1012 ms</td><td class="num">500 ms</td><td class="num delta">−50.6%</td></tr>
+                <tr><td>LCP 最大内容绘制</td><td class="num bad">1132 ms</td><td class="num">804 ms</td><td class="num delta">−29.0%</td></tr>
+                <tr><td>DOMContentLoaded</td><td class="num bad">1084 ms</td><td class="num">743 ms</td><td class="num delta">−31.5%</td></tr>
+                <tr><td>Load 完成</td><td class="num bad">6835 ms</td><td class="num">788 ms</td><td class="num delta">−88.5%</td></tr>
+                <tr><td>二次打开（Service Worker）</td><td class="num">—</td><td class="num">38 ms</td><td class="num delta">新增</td></tr>
+            </tbody>
+        </table>
+    </div>
+
+    <h2>体积对比 <span>单位 KB，越长越慢</span></h2>
+    <div class="card">
+        <div class="bars">
+            <div class="bar-row">
+                <span class="label">原版传输</span>
+                <div class="bar-track"><div class="bar-fill" style="width:100%"></div></div>
+                <span class="bar-val">1,351</span>
+            </div>
+            <div class="bar-row">
+                <span class="label">优化版（未压缩）</span>
+                <div class="bar-track"><div class="bar-fill" style="width:5.1%"></div></div>
+                <span class="bar-val">69.4</span>
+            </div>
+            <div class="bar-row">
+                <span class="label">优化版（br）</span>
+                <div class="bar-track"><div class="bar-fill" style="width:2%"></div></div>
+                <span class="bar-val">26.8</span>
+            </div>
+        </div>
+        <div class="note"><strong>几乎全是头像。</strong>原图 1505×1506、1,288 KB，但界面上只显示 32 / 38 / 68 px 三个尺寸——一个文件就吃掉首屏 95% 的流量。现在按头部重新裁切，输出 192px WebP 12.2 KB、96px WebP 4.8 KB。</div>
+    </div>
+
+    <h2>做了什么 <span>性能</span></h2>
+    <div class="card">
+        <ol class="steps">
+            <li><strong>头像按显示尺寸重出</strong><p>1505² 的 PNG 换成裁好构图的 WebP，CSS 里 <code>width:220%; left:-60%</code> 的硬裁切也一并去掉。</p></li>
+            <li><strong>消灭阻塞请求</strong><p>27.9 KB 样式内联进 <code>&lt;head&gt;</code>，首屏不再等一次关键路径往返；三个 JS 合成一个并改为 <code>defer</code>。</p></li>
+            <li><strong>首帧前定主题和高度</strong><p><code>data-theme</code> 与 <code>--app-height</code> 由 head 内同步脚本先写死，深色模式不再白闪，移动端也不会因地址栏跳动。</p></li>
+            <li><strong>WebGL 延后 + 降频</strong><p>光场在 load 之后用 <code>requestIdleCallback</code> 加载，0.65×DPR、30fps、页面隐藏即停帧，不抢首屏 CPU 和 GPU。</p></li>
+            <li><strong>流式输出按帧合并</strong><p>原来每来一个 token 就重写一次 <code>innerHTML</code>；现在一帧合并成一次 <code>textContent</code>，结束再渲染 HTML。</p></li>
+            <li><strong>滚动不再抢控制权</strong><p>只在用户本来贴底时自动跟随，往上翻历史不会被打断。</p></li>
+            <li><strong>历史对话批量插入 + 长列表跳过渲染</strong><p><code>DocumentFragment</code> 一次性替换；超过 24 条才启用 <code>content-visibility</code>，避免影响短对话的布局精度。</p></li>
+            <li><strong>服务端预压缩与缓存</strong><p>build 阶段生成 <code>.br/.gz</code> 直出，按类型下发 <code>Cache-Control</code>，支持 304。原版是 <code>max-age=0</code>，每次都要重下。</p></li>
+            <li><strong>Service Worker</strong><p>导航 stale-while-revalidate、静态 cache-first、<code>/api/</code> 完全绕过。二次打开 38 ms，断网也能出界面。</p></li>
+        </ol>
+    </div>
+
+    <h2>做了什么 <span>视觉</span></h2>
+    <div class="card">
+        <p style="margin:0 0 16px;color:var(--sub);font-size:13px">玻璃不是一层 <code>backdrop-filter</code> 能撑起来的。白底上尤其难——白玻璃压在白背景上，只剩阴影可以看。所以拆成四层叠：</p>
+        <div class="layers">
+            <div class="layer"><i>1</i><div><b>冷白填充</b><span>rgb(250 252 255)，比纯白低半度。这是白底上玻璃能被"看见"的唯一依据。</span></div></div>
+            <div class="layer"><i>2</i><div><b>1px 发丝线</b><span>白底上白色描边等于没有，所以用 <code>rgba(15,20,32,.075)</code> 的冷灰细线；深色下换成 15% 白。细，但要利。</span></div></div>
+            <div class="layer"><i>3</i><div><b>2px 折射环</b><span><code>feTurbulence</code> + <code>feDisplacementMap</code> 把边缘背后的画面做位移。只做"边缘一点点弯"，不做粗边框——玻璃的厚度感来自这里，但宽度必须克制。</span></div></div>
+            <div class="layer"><i>4</i><div><b>液面光泽</b><span>跟随指针的径向高光，用 CSS 变量 + <code>requestAnimationFrame</code> 节流，只在精确指针设备上启用。</span></div></div>
+        </div>
+        <p style="margin:18px 0 0;color:var(--sub);font-size:13px">背景是纯白 <code>#ffffff</code>。底下有一层原生 WebGL 光场（4 个缓慢漂移的光池），浅色下只留 5.5% 着色——大面积实测仍在 249–251，肉眼就是白，但玻璃边缘有了可以折射的东西。</p>
+        <div class="note"><strong>没有引 Three.js。</strong>这里只需要一层柔光，three.js 光核心就 150 KB+，比整个优化后的首屏还大。用原生 WebGL 画一个全屏三角，3.8 KB 就够。</div>
+    </div>
+
+    <h2>部署 <span>原有文件一律不动，可随时回滚</span></h2>
+    <div class="card">
+        <pre><code># 1. 先备份线上 public
+ssh root@8.134.141.217 "cp -r /path/ali-deploy/public /path/ali-deploy/public.bak.$(date +%F)"
+
+# 2. 传产物（只覆盖 public 和 server.js）
+scp -r optimized/public/* root@8.134.141.217:/path/ali-deploy/public/
+scp optimized/server.js root@8.134.141.217:/path/ali-deploy/server.js
+
+# 3. 重启
+ssh root@8.134.141.217 "cd /path/ali-deploy &amp;&amp; pm2 restart all"</code></pre>
+        <div class="note"><strong>回滚：</strong>把 <code>public.bak.*</code> 换回去重启即可。原版文件在仓库里一直是原样，没有被动过。<br>
+        <strong>发版提醒：</strong>改了前端后把 <code>sw.js</code> 里的 <code>VERSION</code> 改成 <code>qisao-v2</code>，否则老用户可能还读缓存。</div>
+    </div>
+
+    <h2>顺带发现 <span>建议一并处理</span></h2>
+    <div class="card">
+        <p style="margin:0;color:var(--sub);font-size:13px">旧版 <code>deploy/static/js/app.js</code> 把 <code>SILICONFLOW_API_KEY</code> 直接写在前端，任何人查看源码都能拿到并盗刷。优化版走 <code>/api/</code> 代理，Key 只在服务端——如果线上还有直调版本在跑，建议换掉这把 Key。</p>
+    </div>
+
+    <footer>
+        <span>产物目录：optimized/</span>
+        <span>构建：python build.py</span>
+        <span>测试环境：Chromium headless · Slow 4G · 4× CPU</span>
+    </footer>
+</div>
+
+<script>
+document.getElementById('toggle').addEventListener('click', function () {
+    var next = document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark';
+    document.documentElement.dataset.theme = next;
+    try { localStorage.setItem('report_theme', next); } catch (e) {}
+});
+</script>
+</body>
+</html>

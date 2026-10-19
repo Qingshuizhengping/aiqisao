@@ -1,0 +1,6 @@
+# 构建中间产物（build.py 会重新生成）
+build/
+
+# Python
+__pycache__/
+*.pyc
