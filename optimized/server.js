@@ -12,26 +12,34 @@ import { fileURLToPath } from 'node:url';
 import { API_BASE, MODEL, MAX_TOKENS, TEMPERATURE, buildMessages, getApiKey } from './api/_config.js';
 import { IMAGE_MODEL, getImageApiKey } from './api/image_config.js';
 import { renderMarkdown } from './public/static/js/markdown.mjs';
-import { generateImage } from './api/image_gen.js';
+import { generateImageRequest, getPromptOptimizationHealth, prepareImagePrompt } from './api/image_prompt.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 const PUBLIC_DIR = path.join(__dirname, 'public');
 const app = express();
 const PORT = process.env.PORT || 3000;
-const CLIENT_VERSION = 'qisao-v20261021-3';
+const CLIENT_VERSION = 'qisao-v20261021-4';
 const MODEL_REQUEST_OPTIONS = MODEL === 'zai-org/GLM-5.3-Flash' ? { reasoning_effort: 'low' } : {};
 
 function renderClientAnswer(content, clientVersion) {
     const html = renderMarkdown(content);
     if (clientVersion === CLIENT_VERSION) return html;
-    return html + '<p class="client-update"><a href="/?v=20261021-3">启用新版实时排版（请先保存草稿）</a><br><small>对话记录保留，无需重装。</small></p>';
+    return html + '<p class="client-update"><a href="/?v=20261021-4">启用新版实时排版（请先保存草稿）</a><br><small>对话记录保留，无需重装。</small></p>';
 }
 
 app.disable('x-powered-by');
 app.set('trust proxy', 'loopback');
+app.use('/api/image/prepare', express.json({ limit: '64kb' }));
 app.use('/api/image', express.json({ limit: '16mb' }));
 app.use(express.json({ limit: '1mb' }));
+app.use((error, req, res, next) => {
+    if (!req.path.startsWith('/api/image')) return next(error);
+    res.setHeader('Cache-Control', 'no-store');
+    const tooLarge = error?.type === 'entity.too.large';
+    return res.status(tooLarge ? 413 : 400).json({ status: 'error', code: 'INVALID_IMAGE_INPUT',
+        error: tooLarge ? '请求内容过大，请减少图片或文字。' : '请求内容格式无效。' });
+});
 
 // ---------- 静态资源：预压缩 + 分类缓存 ----------
 // 顺序即优先级：sw.js / manifest 必须排在 .js 之前，否则会被当成普通脚本缓存一天，
@@ -127,12 +135,14 @@ app.get('/api/health', (req, res) => res.json({
     model: MODEL,
     imageModel: IMAGE_MODEL,
     imageReady: Boolean(getImageApiKey()),
+    ...getPromptOptimizationHealth(),
 }));
 
 // ---------- 生图（独立入口 /image 使用） ----------
 // 生图按次计费，公网必须挡一层：每 IP 每分钟 5 次、每小时 30 次
 const IMAGE_LIMIT_MINUTE = 5;
 const IMAGE_LIMIT_HOUR = 30;
+const IMAGE_OWNER_CAPACITY = 2048;
 const imageHits = new Map();
 
 function clientIp(req) {
@@ -141,6 +151,12 @@ function clientIp(req) {
 
 function allowImage(ip) {
     const now = Date.now();
+    if (!imageHits.has(ip) && imageHits.size >= IMAGE_OWNER_CAPACITY) {
+        for (const [owner, record] of imageHits) {
+            if (!record.hour.some(time => now - time < 3600000)) imageHits.delete(owner);
+        }
+        if (imageHits.size >= IMAGE_OWNER_CAPACITY) return false;
+    }
     const rec = imageHits.get(ip) || { minute: [], hour: [] };
     rec.minute = rec.minute.filter((t) => now - t < 60000);
     rec.hour = rec.hour.filter((t) => now - t < 3600000);
@@ -161,18 +177,56 @@ setInterval(() => {
     }
 }, 600000).unref();
 
+function imageClientSignal(req, res) {
+    const controller = new AbortController();
+    const cancel = () => {
+        if (!res.writableEnded) controller.abort();
+    };
+    req.once('aborted', cancel);
+    res.once('close', cancel);
+    if (req.aborted || res.destroyed) controller.abort();
+    return { signal: controller.signal, dispose() {
+        req.removeListener('aborted', cancel);
+        res.removeListener('close', cancel);
+    } };
+}
+
+function imageError(res, error) {
+    if (res.destroyed || res.writableEnded) return;
+    const status = Number.isInteger(error?.status) && error.status >= 400 && error.status <= 599 ? error.status : 500;
+    const body = { status: 'error', error: status === 500 ? '服务暂时不可用，请稍后再试。' : error?.message || '服务暂时不可用，请稍后再试。' };
+    if (error?.code && status !== 500) body.code = error.code;
+    if (error?.allowOriginal === true) body.allowOriginal = true;
+    return res.status(status).json(body);
+}
+
+app.post('/api/image/prepare', async (req, res) => {
+    res.setHeader('Cache-Control', 'no-store');
+    const client = imageClientSignal(req, res);
+    try {
+        const result = await prepareImagePrompt(req.body || {}, clientIp(req), { signal: client.signal });
+        if (!res.destroyed && !res.writableEnded) return res.json(result);
+    } catch (error) {
+        return imageError(res, error);
+    } finally {
+        client.dispose();
+    }
+});
+
 app.post('/api/image', async (req, res) => {
+    res.setHeader('Cache-Control', 'no-store');
     const apiKey = getImageApiKey();
     if (!apiKey) return res.status(500).json({ status: 'error', error: '服务端未配置 HUNYUAN_API_KEY，生图不可用' });
-    if (!allowImage(clientIp(req))) {
-        return res.status(429).json({ status: 'error', error: '生成太频繁了，歇一会儿再来（每分钟 5 张、每小时 30 张）' });
-    }
+    const owner = clientIp(req);
+    const client = imageClientSignal(req, res);
     try {
-        const result = await generateImage(req.body || {}, apiKey);
-        return res.json({ status: 'ok', url: result.url, revisedPrompt: result.revisedPrompt, tokens: result.tokens });
-    } catch (e) {
-        const status = (e && e.status) || 500;
-        return res.status(status).json({ status: 'error', error: (e && e.message) || '生图失败' });
+        const result = await generateImageRequest(req.body || {}, owner, apiKey,
+            { signal: client.signal, allowGeneration: () => allowImage(owner) });
+        if (!res.destroyed && !res.writableEnded) return res.json({ status: 'ok', ...result });
+    } catch (error) {
+        return imageError(res, error);
+    } finally {
+        client.dispose();
     }
 });
 

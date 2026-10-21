@@ -19,6 +19,8 @@
     var generateBtn = document.getElementById('generateBtn');
     var generateLabel = document.getElementById('generateLabel');
     var serviceStatus = document.getElementById('serviceStatus');
+    var optimizeToggle = document.getElementById('optimizeToggle');
+    var optimizeStatus = document.getElementById('optimizeStatus');
 
     var stageEmpty = document.getElementById('stageEmpty');
     var stageLoading = document.getElementById('stageLoading');
@@ -32,6 +34,13 @@
     var resultPrompt = document.getElementById('resultPrompt');
     var errorText = document.getElementById('errorText');
     var errorRetry = document.getElementById('errorRetry');
+    var useOriginalBtn = document.getElementById('useOriginalBtn');
+    var stageClarification = document.getElementById('stageClarification');
+    var clarificationQuestion = document.getElementById('clarificationQuestion');
+    var clarificationEdit = document.getElementById('clarificationEdit');
+    var optimizationDetails = document.getElementById('optimizationDetails');
+    var originalPromptDisplay = document.getElementById('originalPromptDisplay');
+    var optimizedPromptDisplay = document.getElementById('optimizedPromptDisplay');
 
     var historyGrid = document.getElementById('historyGrid');
     var historyClear = document.getElementById('historyClear');
@@ -44,6 +53,7 @@
     var MAX_HISTORY = 36;
     var MAX_PROMPT = 4000;
     var REQUEST_TIMEOUT = 240000;
+    var PREPARE_TIMEOUT = 20000;
     var MAX_REFERENCES = 20;
     var MAX_REFERENCE_FILE_BYTES = 20 * 1024 * 1024;
     var MAX_REFERENCE_CHARS = 14000000;
@@ -58,6 +68,12 @@
     var startedAt = 0;
     var lastPrompt = '';
     var serviceReady = true;
+    var healthPending = true;
+    var optimizationReady = false;
+    var optimizationAvailableText = '智能优化不可用，将按原始描述生成。';
+    var activePhase = 'generate';
+    var pendingOriginalSnapshot = null;
+    var uncertainGeneration = false;
 
     /* ------------------------------ 主题 ------------------------------ */
     function applyTheme(theme, persist) {
@@ -81,6 +97,7 @@
         stageLoading.hidden = name !== 'loading';
         stageResult.hidden = name !== 'result';
         stageError.hidden = name !== 'error';
+        stageClarification.hidden = name !== 'clarification';
     }
 
     function startTimer() {
@@ -104,28 +121,40 @@
     }
 
     function generationLabel() {
-        return currentSize === 'auto' ? '正在按描述自动确定尺寸…' : '正在生成 ' + currentSize + ' · 2K 图…';
+        return activePhase === 'prepare' ? '正在理解并优化需求…' : '正在生成并保存…';
     }
 
     function syncControls() {
         var locked = isBusy || isReadingReferences;
-        generateBtn.disabled = locked || !serviceReady;
-        generateLabel.textContent = isBusy ? '生成中…' : isReadingReferences ? '正在读取图片…' : '生成图片';
+        generateBtn.disabled = locked || healthPending || !serviceReady;
+        generateLabel.textContent = isBusy ? activePhase === 'prepare' ? '正在优化需求…' : '生成中…' : isReadingReferences ? '正在读取图片…' : healthPending ? '正在检查服务…' : '生成图片';
         refInput.disabled = locked || references.length >= MAX_REFERENCES;
         if (refPick) refPick.setAttribute('aria-disabled', String(refInput.disabled));
         refClear.disabled = locked;
         asRefBtn.disabled = locked || references.length >= MAX_REFERENCES;
         againBtn.disabled = locked;
         errorRetry.disabled = locked;
-        promptEl.disabled = isReadingReferences;
+        useOriginalBtn.disabled = locked || !pendingOriginalSnapshot || !serviceReady;
+        clarificationEdit.disabled = locked;
+        promptEl.disabled = locked;
+        optimizeToggle.disabled = locked || !optimizationReady;
         refPreview.setAttribute('aria-busy', String(isReadingReferences));
         document.querySelectorAll('#refPreview .ref-remove, #sizeChips .size-chip, #presets .chip').forEach(function (button) { button.disabled = locked; });
         if (refCount) refCount.textContent = references.length + ' / ' + MAX_REFERENCES + ' 张' + (isReadingReferences ? ' · 正在读取…' : '');
+        optimizeStatus.textContent = optimizationReady ? optimizeToggle.checked ? '仅整理文字需求，不上传参考图进行理解。' : '已关闭，将直接使用你的原始描述。' : optimizationAvailableText;
     }
 
     function showError(message) {
         setStage('error');
         errorText.textContent = message || '生成失败，请稍后重试';
+        errorRetry.textContent = uncertainGeneration ? '重新生成（可能重复计费）' : '重新提交';
+    }
+
+    function invalidatePreparedInput() {
+        pendingOriginalSnapshot = null;
+        useOriginalBtn.hidden = true;
+        useOriginalBtn.disabled = true;
+        optimizationDetails.hidden = true;
     }
 
     /* ------------------------------ 提示词 ------------------------------ */
@@ -133,11 +162,21 @@
         charCount.textContent = promptEl.value.length + ' / ' + MAX_PROMPT;
     }
 
-    promptEl.addEventListener('input', syncCharCount);
+    promptEl.addEventListener('input', function () {
+        syncCharCount();
+        invalidatePreparedInput();
+    });
+    promptEl.addEventListener('change', invalidatePreparedInput);
+    optimizeToggle.addEventListener('change', function () {
+        if (!optimizationReady) optimizeToggle.checked = false;
+        invalidatePreparedInput();
+        syncControls();
+    });
 
     presetsEl.addEventListener('click', function (event) {
         var chip = event.target.closest('.chip');
         if (!chip || isBusy || isReadingReferences) return;
+        invalidatePreparedInput();
         promptEl.value = chip.dataset.prompt || '';
         syncCharCount();
         promptEl.focus();
@@ -154,6 +193,7 @@
     sizeChips.addEventListener('click', function (event) {
         var chip = event.target.closest('.size-chip');
         if (!chip || isBusy || isReadingReferences) return;
+        invalidatePreparedInput();
         var chips = sizeChips.querySelectorAll('.size-chip');
         for (var i = 0; i < chips.length; i++) chips[i].setAttribute('aria-pressed', String(chips[i] === chip));
         currentSize = chip.dataset.size || DEFAULT_SIZE;
@@ -238,6 +278,7 @@
 
     async function appendReferences(items, prepare) {
         if (isBusy || isReadingReferences || !items.length) return false;
+        invalidatePreparedInput();
         if (references.length + items.length > MAX_REFERENCES) {
             showError('最多添加 ' + MAX_REFERENCES + ' 张参考图，请先移除一些图片');
             return false;
@@ -268,6 +309,7 @@
     refInput.addEventListener('change', async function () {
         var files = Array.from(refInput.files || []);
         if (isBusy || isReadingReferences || !files.length) { refInput.value = ''; return; }
+        invalidatePreparedInput();
         try {
             files.forEach(function (file) {
                 if (!/^image\/(?:png|jpe?g|webp)$/i.test(file.type)) throw new Error('参考图仅支持 PNG / JPG / WebP 图片');
@@ -285,6 +327,7 @@
 
     refClear.addEventListener('click', function () {
         if (isBusy || isReadingReferences) return;
+        invalidatePreparedInput();
         references = [];
         renderReferences();
     });
@@ -294,6 +337,7 @@
         if (!button || !refPreview.contains(button) || isBusy || isReadingReferences) return;
         var index = Number(button.dataset.referenceIndex);
         if (!Number.isInteger(index) || index < 0 || index >= references.length) return;
+        invalidatePreparedInput();
         references.splice(index, 1);
         renderReferences();
     });
@@ -367,41 +411,172 @@
     });
 
     /* ------------------------------ 生成 ------------------------------ */
-    async function callApi(payload) {
+    function newRequestId() {
+        if (!window.crypto || !window.crypto.getRandomValues) throw new Error('当前浏览器无法安全创建请求，请更新浏览器后重试');
+        if (typeof window.crypto.randomUUID === 'function') return window.crypto.randomUUID();
+        var bytes = new Uint8Array(16);
+        window.crypto.getRandomValues(bytes);
+        bytes[6] = (bytes[6] & 15) | 64;
+        bytes[8] = (bytes[8] & 63) | 128;
+        var hex = Array.from(bytes, function (byte) { return byte.toString(16).padStart(2, '0'); }).join('');
+        return hex.slice(0, 8) + '-' + hex.slice(8, 12) + '-' + hex.slice(12, 16) + '-' + hex.slice(16, 20) + '-' + hex.slice(20);
+    }
+
+    function captureSnapshot(prompt) {
+        return {
+            prompt: prompt,
+            inputPrompt: promptEl.value,
+            size: currentSize,
+            referenceImages: references.map(function (reference) { return reference.dataUrl; }),
+            optimizationEnabled: optimizationReady && optimizeToggle.checked
+        };
+    }
+
+    function snapshotMatches(snapshot) {
+        return !!snapshot && promptEl.value === snapshot.inputPrompt && currentSize === snapshot.size &&
+            (optimizationReady && optimizeToggle.checked) === snapshot.optimizationEnabled &&
+            references.length === snapshot.referenceImages.length && references.every(function (reference, index) {
+                return reference.dataUrl === snapshot.referenceImages[index];
+            });
+    }
+
+    async function referenceHashes(snapshot) {
+        var hashes = [];
+        var encoder = new TextEncoder();
+        for (var index = 0; index < snapshot.referenceImages.length; index++) {
+            var digest = await window.crypto.subtle.digest('SHA-256', encoder.encode(snapshot.referenceImages[index]));
+            hashes.push(Array.from(new Uint8Array(digest), function (byte) { return byte.toString(16).padStart(2, '0'); }).join(''));
+        }
+        return hashes;
+    }
+
+    async function postJson(path, payload, timeout) {
         var controller = new AbortController();
-        var timer = setTimeout(function () { controller.abort(); }, REQUEST_TIMEOUT);
+        var timer = setTimeout(function () { controller.abort(); }, timeout);
         try {
-            var resp = await fetch('/api/image', {
+            var resp = await fetch(path, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(payload),
                 signal: controller.signal
             });
             var data = null;
-            try { data = await resp.json(); } catch (e) { /* 非 JSON 走下面的兜底 */ }
-            if (!resp.ok || !data || data.status !== 'ok') {
-                throw new Error((data && data.error) || ('生成失败 HTTP ' + resp.status));
+            try { data = await resp.json(); } catch (error) {
+                if (error && error.name === 'AbortError') throw error;
+            }
+            if (!resp.ok || !data || typeof data !== 'object') {
+                var failure = new Error((data && typeof data.error === 'string' && data.error) || ('请求失败 HTTP ' + resp.status));
+                failure.httpStatus = resp.status;
+                failure.code = data && data.code;
+                failure.allowOriginal = data && data.allowOriginal === true;
+                throw failure;
             }
             return data;
-        } catch (e) {
-            if (e && e.name === 'AbortError') throw new Error('生成超时了，稍后重试或把描述写简单一点');
-            throw e;
+        } catch (error) {
+            if (error && error.httpStatus) throw error;
+            var transportError = new Error(error && error.name === 'AbortError' ? path === '/api/image/prepare' ? '需求优化等待超时，尚未发起生图。' : '生成等待超时，结果尚未确认。服务可能仍在处理，请勿立即重复提交。' : path === '/api/image/prepare' ? '需求优化连接中断，尚未发起生图。' : '生图连接中断，结果尚未确认。服务可能仍在处理，请勿立即重复提交。');
+            transportError.transport = true;
+            throw transportError;
         } finally {
             clearTimeout(timer);
         }
     }
 
-    function showResult(data, prompt) {
+    function showOptimization(snapshot, prepared) {
+        originalPromptDisplay.textContent = snapshot.prompt;
+        optimizedPromptDisplay.textContent = prepared.optimizedPrompt;
+        optimizationDetails.hidden = false;
+    }
+
+    function showResult(data, snapshot, prepared) {
         setStage('result');
         resultImg.src = data.url;
         downloadBtn.href = data.url;
         downloadBtn.setAttribute('download', 'qisao-' + Date.now() + '.png');
-        resultPrompt.textContent = data.revisedPrompt ? '模型改写：' + data.revisedPrompt : prompt;
-        pushHistory({ url: data.url, prompt: prompt, ts: Date.now() });
+        resultPrompt.textContent = data.revisedPrompt ? '生图模型额外改写：' + data.revisedPrompt : snapshot.prompt;
+        var entry = { url: data.url, prompt: snapshot.prompt, ts: Date.now() };
+        if (prepared) {
+            entry.originalPrompt = snapshot.prompt;
+            entry.optimizedPrompt = prepared.optimizedPrompt;
+            showOptimization(snapshot, prepared);
+        }
+        pushHistory(entry);
+        uncertainGeneration = false;
+    }
+
+    function confirmNewGeneration() {
+        return !uncertainGeneration || window.confirm('上一次生成可能仍在处理或已经计费。重新生成可能重复计费，是否继续？');
+    }
+
+    async function sendImage(snapshot, prepared) {
+        if (!snapshotMatches(snapshot)) throw new Error('输入已变化，本次准备已取消，请重新生成。');
+        var payload = {
+            prompt: snapshot.prompt,
+            size: snapshot.size,
+            requestId: prepared ? prepared.preparationRequestId : newRequestId()
+        };
+        if (snapshot.referenceImages.length) payload.referenceImages = snapshot.referenceImages.slice();
+        if (prepared) payload.optimizationToken = prepared.optimizationToken;
+        activePhase = 'generate';
+        syncControls();
+        startTimer();
+        try {
+            var data = await postJson('/api/image', payload, REQUEST_TIMEOUT);
+            if (data.status !== 'ok' || typeof data.url !== 'string' || !data.url) {
+                var invalid = new Error(typeof data.error === 'string' ? data.error : '生成结果未确认，请勿盲目重试；重新生成可能重复计费。');
+                invalid.uncertain = true;
+                throw invalid;
+            }
+            showResult(data, snapshot, prepared);
+        } catch (error) {
+            if (error.transport || error.uncertain || error.httpStatus >= 500 || error.httpStatus === 409 || error.httpStatus < 400) uncertainGeneration = true;
+            throw error;
+        }
+    }
+
+    async function prepareImage(snapshot) {
+        activePhase = 'prepare';
+        syncControls();
+        startTimer();
+        var hashes = await referenceHashes(snapshot);
+        if (!snapshotMatches(snapshot)) throw new Error('输入已变化，本次准备已取消，请重新生成。');
+        var prepared;
+        var preparationRequestId = newRequestId();
+        try {
+            prepared = await postJson('/api/image/prepare', {
+                prompt: snapshot.prompt,
+                size: snapshot.size,
+                referenceHashes: hashes,
+                requestId: preparationRequestId
+            }, PREPARE_TIMEOUT);
+        } catch (error) {
+            var canUseOriginal = error.transport || ([502, 503, 504].indexOf(error.httpStatus) !== -1 && error.code === 'OPTIMIZATION_UNAVAILABLE' && error.allowOriginal);
+            if (canUseOriginal && snapshotMatches(snapshot)) {
+                pendingOriginalSnapshot = snapshot;
+                useOriginalBtn.hidden = false;
+                showError(error.message + '\n你可以修改后重新提交，或明确选择使用原词继续生成。');
+                return null;
+            }
+            throw error;
+        }
+        if (!snapshotMatches(snapshot)) throw new Error('输入已变化，本次准备已取消，请重新生成。');
+        if (prepared.status === 'needs_clarification') {
+            if (typeof prepared.question !== 'string' || !prepared.question.trim()) throw new Error('智能优化未返回有效的补充问题，请修改描述后重新提交。');
+            clarificationQuestion.textContent = prepared.question;
+            setStage('clarification');
+            return null;
+        }
+        if (prepared.status !== 'ready' || typeof prepared.optimizationToken !== 'string' || !prepared.optimizationToken ||
+            prepared.originalPrompt !== snapshot.prompt || typeof prepared.optimizedPrompt !== 'string' || !prepared.optimizedPrompt.trim()) {
+            throw new Error('优化结果与本次需求不一致，已停止生图，请重新提交。');
+        }
+        prepared.preparationRequestId = preparationRequestId;
+        showOptimization(snapshot, prepared);
+        return prepared;
     }
 
     async function generate() {
-        if (isBusy || isReadingReferences) return;
+        if (isBusy || isReadingReferences || healthPending) return;
         if (!serviceReady) {
             showError('生图服务尚未启用，请联系管理员配置。');
             return;
@@ -416,19 +591,19 @@
             showError('提示词超过 ' + MAX_PROMPT + ' 字了，精简一下');
             return;
         }
+        if (!confirmNewGeneration()) return;
 
+        invalidatePreparedInput();
+        var snapshot = captureSnapshot(prompt);
         lastPrompt = prompt;
+        activePhase = snapshot.optimizationEnabled ? 'prepare' : 'generate';
         setBusy(true);
         setStage('loading');
-        startTimer();
 
         try {
-            var data = await callApi({
-                prompt: prompt,
-                size: currentSize,
-                referenceImages: references.length ? references.map(function (reference) { return reference.dataUrl; }) : undefined
-            });
-            showResult(data, prompt);
+            var prepared = snapshot.optimizationEnabled ? await prepareImage(snapshot) : null;
+            if (snapshot.optimizationEnabled && !prepared) return;
+            await sendImage(snapshot, prepared);
         } catch (e) {
             showError(e && e.message ? e.message : '生成失败，请稍后重试');
         } finally {
@@ -446,8 +621,32 @@
         generate();
     });
     errorRetry.addEventListener('click', function () {
-        setStage(stageResult.hidden ? 'empty' : 'result');
         generate();
+    });
+    useOriginalBtn.addEventListener('click', async function () {
+        if (isBusy || isReadingReferences || !pendingOriginalSnapshot) return;
+        var snapshot = pendingOriginalSnapshot;
+        if (!serviceReady || !snapshotMatches(snapshot)) {
+            invalidatePreparedInput();
+            showError('输入已变化或服务暂不可用，请重新提交当前需求。');
+            return;
+        }
+        pendingOriginalSnapshot = null;
+        useOriginalBtn.hidden = true;
+        activePhase = 'generate';
+        setBusy(true);
+        setStage('loading');
+        try {
+            await sendImage(snapshot, null);
+        } catch (error) {
+            showError(error.message || '生成失败，请稍后重试');
+        } finally {
+            stopTimer();
+            setBusy(false);
+        }
+    });
+    clarificationEdit.addEventListener('click', function () {
+        if (!isBusy && !isReadingReferences) promptEl.focus();
     });
 
     resultImg.addEventListener('click', function () { openLightbox(resultImg.src); });
@@ -486,14 +685,25 @@
             if (!response.ok) throw new Error('Service unavailable');
             return response.json();
         }).then(function (data) {
-            if (typeof data.imageReady !== 'boolean') return;
-            serviceReady = data.imageReady;
+            var modeIsText = data.promptOptimizationMode === undefined || data.promptOptimizationMode === 'text';
+            var secureFeatures = !!(window.crypto && window.crypto.subtle && window.crypto.getRandomValues && window.TextEncoder);
+            optimizationReady = data.promptOptimizationReady === true && modeIsText && secureFeatures;
+            if (data.promptOptimizationReady === true && !modeIsText) optimizationAvailableText = '当前优化模式暂不支持，将按原始描述生成。';
+            else if (data.promptOptimizationReady === true && !secureFeatures) optimizationAvailableText = '智能优化需要 HTTPS 安全连接及新版浏览器；当前可直接使用原词生成。';
+            optimizeToggle.checked = optimizationReady;
+            if (typeof data.imageReady === 'boolean') serviceReady = data.imageReady;
+            healthPending = false;
             setBusy(isBusy);
             if (serviceStatus && !serviceReady) {
                 serviceStatus.hidden = false;
                 serviceStatus.textContent = '生图服务尚未启用，请联系管理员配置。';
             }
-        }).catch(function () {});
+        }).catch(function () {
+            optimizationReady = false;
+            optimizeToggle.checked = false;
+            healthPending = false;
+            syncControls();
+        });
 
         var params = new URLSearchParams(location.search);
         var seeded = params.get('prompt');

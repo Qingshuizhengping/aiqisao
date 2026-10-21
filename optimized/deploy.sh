@@ -64,7 +64,7 @@ remote_archive="/tmp/$(basename "$local_stage").tgz"
 trap 'rm -f -- "$archive"; rmdir -- "$local_stage"' EXIT
 tar czf "$archive" --exclude='public/static/gen' --exclude='public/downloads' \
     --exclude='*/.*' --exclude='*.apk' --exclude='*.aab' --exclude='*.pem' --exclude='*.key' \
-    server.js api/_env.js api/image_config.js api/image_gen.js public package.json package-lock.json
+    server.js api/_env.js api/image_config.js api/image_gen.js api/image_prompt.js public package.json package-lock.json
 
 # 3. 上传
 echo "==> 上传到 $REMOTE"
@@ -89,7 +89,7 @@ if not app.is_absolute() or app.resolve() != app or len(app.parts) < 3:
     raise SystemExit('Unsafe or symbolic application directory')
 if not app.is_dir() or not (app / 'api/_config.js').is_file():
     raise SystemExit('Initial setup required: configure api/_config.js and provider credentials before deploying; the default model is never installed automatically.')
-required = {'server.js', 'api/_env.js', 'api/image_config.js', 'api/image_gen.js', 'package.json', 'package-lock.json'}
+required = {'server.js', 'api/_env.js', 'api/image_config.js', 'api/image_gen.js', 'api/image_prompt.js', 'package.json', 'package-lock.json'}
 seen = set()
 with tarfile.open(sys.argv[2]) as bundle:
     for member in bundle.getmembers():

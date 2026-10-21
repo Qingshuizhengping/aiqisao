@@ -97,6 +97,7 @@
 .presets { display: flex; flex-wrap: wrap; gap: 7px; margin-top: -4px; }
 
 .chip {
+    min-height: 44px;
     padding: 6px 12px;
     border: 1px solid var(--line);
     border-radius: 999px;
@@ -106,6 +107,21 @@
     transition: all .2s ease;
 }
 .chip:hover { border-color: var(--accent-line); background: var(--accent-soft); color: var(--accent-ink); }
+
+.optimization-control { min-width: 0; padding: 12px 14px; border: 1px solid var(--line); border-radius: 14px; background: var(--glass-fill-soft); }
+.optimization-switch { position: relative; display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 44px; cursor: pointer; }
+.optimization-copy { display: flex; flex-direction: column; min-width: 0; gap: 4px; }
+.optimization-copy strong { color: var(--ink); font-size: 12.5px; font-weight: 600; }
+.optimization-copy small { color: var(--muted); font-size: 10.5px; line-height: 1.6; overflow-wrap: anywhere; }
+.optimization-switch input { position: absolute; right: 0; width: 44px; height: 44px; margin: 0; opacity: 0; cursor: pointer; }
+.switch-track { flex: 0 0 42px; width: 42px; height: 26px; padding: 3px; border: 1px solid var(--line-strong); border-radius: 999px; background: var(--glass-fill-strong); transition: background-color .2s ease, opacity .2s ease; pointer-events: none; }
+.switch-track::after { content: ''; display: block; width: 18px; height: 18px; border-radius: 50%; background: var(--secondary); box-shadow: var(--shadow-sm); transition: transform .2s ease, background-color .2s ease; }
+.optimization-switch input:checked + .switch-track { background: var(--accent); border-color: var(--accent-line); }
+.optimization-switch input:checked + .switch-track::after { transform: translateX(16px); background: var(--canvas); }
+.optimization-switch input:focus-visible + .switch-track { outline: 2px solid var(--accent-ink); outline-offset: 4px; }
+.optimization-switch input:disabled { cursor: not-allowed; }
+.optimization-switch input:disabled + .switch-track { opacity: .45; }
+.optimization-control > p { margin: 8px 0 0; color: var(--muted); font-size: 10.5px; line-height: 1.7; overflow-wrap: anywhere; }
 
 /* 尺寸档位 */
 .size-chips { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 7px; }
@@ -271,8 +287,9 @@
 }
 @keyframes plateShimmer { to { background-position: -220% 0; } }
 
-.loading-meta { display: flex; align-items: center; gap: 10px; color: var(--secondary); font-size: 12px; }
-.loading-dots { display: inline-flex; gap: 4px; }
+.loading-meta { display: flex; align-items: center; gap: 10px; min-width: 0; max-width: 100%; color: var(--secondary); font-size: 12px; }
+#loadingText { min-width: 0; overflow-wrap: anywhere; }
+.loading-dots { display: inline-flex; flex: 0 0 auto; gap: 4px; }
 .loading-dots i {
     width: 5px;
     height: 5px;
@@ -298,6 +315,11 @@
 
 .result-actions { display: flex; flex-wrap: wrap; gap: 8px; }
 .result-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 44px;
+    max-width: 100%;
     padding: 8px 14px;
     border: 1px solid var(--line-strong);
     border-radius: 10px;
@@ -308,6 +330,7 @@
     transition: all .2s ease;
 }
 .result-btn:hover { border-color: var(--accent-line); color: var(--accent-ink); background: var(--accent-soft); }
+.result-btn:disabled, .chip:disabled { opacity: .55; cursor: wait; }
 
 .result-prompt {
     margin: 0;
@@ -322,14 +345,26 @@
 
 /* 错误 */
 .stage-error { display: flex; flex-direction: column; align-items: center; gap: 14px; padding: 20px; text-align: center; }
-.stage-error p { margin: 0; max-width: 420px; color: var(--danger); font-size: 12.5px; line-height: 1.8; }
+.stage-error p { margin: 0; max-width: 420px; color: var(--danger); font-size: 12.5px; line-height: 1.8; white-space: pre-line; overflow-wrap: anywhere; }
+.stage-error .result-actions { justify-content: center; }
+.stage-clarification { display: flex; flex-direction: column; align-items: center; gap: 12px; min-width: 0; max-width: 480px; padding: 20px; text-align: center; }
+.stage-clarification > .ui-icon { width: 28px; height: 28px; color: var(--accent-ink); }
+.stage-clarification h2 { margin: 0; color: var(--ink); font-size: 14px; font-weight: 600; }
+.stage-clarification p { margin: 0; color: var(--secondary); font-size: 13px; line-height: 1.8; white-space: pre-wrap; overflow-wrap: anywhere; }
+.stage-clarification small { color: var(--muted); font-size: 11px; line-height: 1.8; }
+.optimization-details { min-width: 0; padding: 0 16px 14px; border: 1px solid var(--line); border-radius: 16px; background: var(--glass-fill-soft); }
+.optimization-details summary { min-height: 44px; padding: 13px 0; color: var(--secondary); font-size: 12px; cursor: pointer; }
+.optimization-text { min-width: 0; margin-top: 8px; }
+.optimization-text h2 { margin: 0 0 6px; color: var(--muted); font-size: 10.5px; font-weight: 500; }
+.optimization-text p { margin: 0; color: var(--ink); font-size: 12px; line-height: 1.8; white-space: pre-wrap; overflow-wrap: anywhere; }
+.optimization-note { margin: 14px 0 0; color: var(--muted); font-size: 10.5px; line-height: 1.7; overflow-wrap: anywhere; }
 
 /* ------------------------------ 历史 ------------------------------ */
 .history-block { display: flex; flex-direction: column; gap: 10px; }
 
 .history-head { display: flex; align-items: baseline; justify-content: space-between; }
 .history-head > span { color: var(--muted); font-size: 10.5px; letter-spacing: .8px; }
-.history-clear { border: 0; background: transparent; color: var(--muted); font-size: 10.5px; }
+.history-clear { min-width: 44px; min-height: 44px; border: 0; background: transparent; color: var(--muted); font-size: 10.5px; }
 .history-clear:hover { color: var(--danger); }
 
 .history-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(96px, 1fr)); gap: 8px; }
@@ -370,8 +405,8 @@
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    width: 40px;
-    height: 40px;
+    width: 44px;
+    height: 44px;
     border: 1px solid rgba(255, 255, 255, .18);
     border-radius: 50%;
     background: rgba(255, 255, 255, .1);

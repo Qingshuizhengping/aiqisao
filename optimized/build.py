@@ -51,6 +51,8 @@ def precompress(path):
     if brotli:
         with open(path + ".br", "wb") as f:
             f.write(brotli.compress(raw, quality=11, lgwin=22))
+    elif os.path.exists(path + ".br"):
+        os.unlink(path + ".br")
 
 
 def human(n):

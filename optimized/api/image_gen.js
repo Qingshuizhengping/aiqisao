@@ -23,7 +23,7 @@ export const DEFAULT_SIZE = '1:1';
 const MAX_AREA = 2048 * 2048;
 
 // 默认档位兜底：前端没传就按 2K
-function resolveSize(sizeKey) {
+export function resolveSize(sizeKey) {
     const key = String(sizeKey || '').trim() || DEFAULT_SIZE;
     if (key === 'auto') return null;
     if (!Object.prototype.hasOwnProperty.call(SIZE_PRESETS, key)) {
@@ -41,7 +41,7 @@ function resolveSize(sizeKey) {
 const MAX_FILES = 160;
 const MAX_AGE_MS = 24 * 3600 * 1000;
 const MAX_REF_CHARS = 14_000_000; // 约 10MB 图片的 base64
-const MAX_REFERENCE_IMAGES = 20;
+export const MAX_REFERENCE_IMAGES = 20;
 const MAX_IMAGE_BYTES = 20 * 1024 * 1024;
 const MAX_JSON_BYTES = 32 * 1024 * 1024;
 
@@ -68,7 +68,7 @@ function sanitizeReference(value) {
     throw httpError(400, '参考图格式不支持，请上传 PNG / JPG / WebP 图片');
 }
 
-function sanitizeReferences(payload) {
+export function sanitizeReferences(payload) {
     const multiple = payload && payload.referenceImages;
     let values;
     if (multiple !== undefined) {
@@ -86,6 +86,23 @@ function sanitizeReferences(payload) {
         if (characters > MAX_REF_CHARS) throw httpError(413, '参考图总大小过大，请减少图片或使用更小的图片');
     }
     return values.map(sanitizeReference);
+}
+
+export function validateImagePayload(payload, { strict = false, dataUrlsOnly = false } = {}) {
+    if (!payload || typeof payload !== 'object' || Array.isArray(payload)) throw httpError(400, '生图参数无效');
+    if (strict && typeof payload.prompt !== 'string') throw httpError(400, '提示词必须为文字');
+    if (strict && payload.size !== undefined && typeof payload.size !== 'string') throw httpError(400, '尺寸选项无效');
+    const prompt = String(payload.prompt || '').trim();
+    if (!prompt) throw httpError(400, '请先写清楚想生成什么');
+    if (prompt.length > 4000) throw httpError(400, '提示词太长了，控制在 4000 字以内');
+    const sizeKey = String(payload.size || DEFAULT_SIZE).trim() || DEFAULT_SIZE;
+    const size = resolveSize(sizeKey);
+    const referenceImages = sanitizeReferences(payload);
+    if (dataUrlsOnly && referenceImages.some(value => !/^data:image\//i.test(value))) {
+        throw httpError(400, '优化请求仅支持已上传的 PNG / JPG / WebP 参考图');
+    }
+    const session = String(payload.session || '').replace(/[^A-Za-z0-9_-]/g, '').slice(0, 64);
+    return { prompt, sizeKey, size, referenceImages, session };
 }
 
 function sniffExt(buf) {
@@ -247,18 +264,9 @@ function upstreamFailure(status, body) {
  * @param {{ prompt: string, size?: string, referenceImage?: string, referenceImages?: string[], session?: string }} payload
  * @returns {Promise<{ url: string, revisedPrompt: string, tokens: number }>}
  */
-export async function generateImage(payload, apiKey) {
+export async function generateImage(payload, apiKey, options = {}) {
     if (!apiKey) throw httpError(500, '服务端未配置 HUNYUAN_API_KEY，生图不可用');
-
-    const prompt = String((payload && payload.prompt) || '').trim();
-    if (!prompt) throw httpError(400, '请先写清楚想生成什么');
-    if (prompt.length > 4000) throw httpError(400, '提示词太长了，控制在 4000 字以内');
-
-    const sizeKey = String((payload && payload.size) || DEFAULT_SIZE);
-    const size = resolveSize(sizeKey);
-
-    const referenceImages = sanitizeReferences(payload);
-    const session = String((payload && payload.session) || '').replace(/[^A-Za-z0-9_-]/g, '').slice(0, 64);
+    const { prompt, size, referenceImages, session } = validateImagePayload(payload || {});
 
     const content = [{ type: 'text', text: prompt }];
     for (const referenceImage of referenceImages) content.push({ type: 'image_url', image_url: { url: referenceImage } });
@@ -268,6 +276,7 @@ export async function generateImage(payload, apiKey) {
     if (session) body.session = session;
 
     let resp;
+    options.beforeSubmit?.();
     try {
         resp = await fetchWithTimeout(IMAGE_API_URL, {
             method: 'POST',

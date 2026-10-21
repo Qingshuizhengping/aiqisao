@@ -67,6 +67,15 @@
                     <textarea id="prompt" rows="5" placeholder="例：哑银外盒的产品平铺图，浅色花纹背景，柔光打亮，高级质感，留白供后期加字"></textarea>
                 </div>
 
+                <div class="optimization-control">
+                    <label class="optimization-switch" for="optimizeToggle">
+                        <span class="optimization-copy"><strong>智能优化描述</strong><small>先理解需求，保留主体与关键要求</small></span>
+                        <input type="checkbox" id="optimizeToggle" role="switch" aria-describedby="optimizeStatus" disabled>
+                        <span class="switch-track" aria-hidden="true"></span>
+                    </label>
+                    <p id="optimizeStatus" role="status" aria-live="polite">正在检查智能优化服务…</p>
+                </div>
+
                 <div class="presets" id="presets" aria-label="常用模板">
                     <button type="button" class="chip" data-prompt="薇之雨产品平铺图：哑银外盒静置于浅色花纹台面，柔和侧光，浅景深，画面干净留白，高级护肤品质感，真实摄影风格">产品平铺</button>
                     <button type="button" class="chip" data-prompt="竖版朋友圈海报：橄榄绿与米白配色，大面积留白，雨林光影作为背景虚化，上方预留标题文字区域，极简高级，商业海报风格">海报竖版</button>
@@ -152,9 +161,26 @@
                     </div>
                     <div class="stage-error" id="stageError" hidden>
                         <p id="errorText"></p>
-                        <button class="result-btn" type="button" id="errorRetry">重试</button>
+                        <div class="result-actions">
+                            <button class="result-btn" type="button" id="useOriginalBtn" hidden>使用原词继续</button>
+                            <button class="result-btn" type="button" id="errorRetry">重新提交</button>
+                        </div>
+                    </div>
+                    <div class="stage-clarification" id="stageClarification" role="status" hidden>
+                        <span class="ui-icon icon-sparkles" aria-hidden="true"></span>
+                        <h2>再补充一点，让画面更准确</h2>
+                        <p id="clarificationQuestion"></p>
+                        <small>参考图和尺寸已保留，请在上方描述中补充后重新生成。</small>
+                        <button class="result-btn" type="button" id="clarificationEdit">补充描述</button>
                     </div>
                 </div>
+
+                <details class="optimization-details" id="optimizationDetails" hidden>
+                    <summary>查看本次描述优化</summary>
+                    <div class="optimization-text"><h2>你的原始描述</h2><p id="originalPromptDisplay"></p></div>
+                    <div class="optimization-text"><h2>用于生成的优化描述</h2><p id="optimizedPromptDisplay"></p></div>
+                    <p class="optimization-note">智能优化仅整理文字需求；生图模型如有额外改写，会单独显示在结果下方。</p>
+                </details>
 
                 <div class="history-block">
                     <div class="history-head">
@@ -176,6 +202,6 @@
     </button>
 </div>
 
-<script src="/static/js/studio.js?v=20261021-3" defer></script>
+<script src="/static/js/studio.js?v=20261021-4" defer></script>
 </body>
 </html>
