@@ -122,7 +122,8 @@
                     <span class="ui-icon icon-sparkles" aria-hidden="true"></span>
                     <span id="generateLabel">生成图片</span>
                 </button>
-                <p class="studio-hint">单次约 10–30 秒 · 结果自动保存在本机</p>
+                <p class="studio-hint" id="serviceStatus" role="status" hidden></p>
+                <p class="studio-hint">生成耗时随排队变化 · 记录保存在此设备，服务器图片会按时效和数量清理，请及时下载</p>
             </section>
 
             <section class="studio-stage-wrap" aria-label="生成结果">
@@ -174,6 +175,6 @@
     </button>
 </div>
 
-<script src="/static/js/studio.js" defer></script>
+<script src="/static/js/studio.js?v=20261021-2" defer></script>
 </body>
 </html>

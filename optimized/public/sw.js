@@ -8,12 +8,12 @@
  *
  * 发版时把 VERSION 改掉即可强制刷新缓存。
  */
-var VERSION = 'qisao-v20261021-1';
+var VERSION = 'qisao-v20261021-2';
 
 var PRECACHE = [
     '/',
     '/static/js/app.js',
-    '/static/js/app.js?v=20261019-3',
+    '/static/js/app.js?v=20261021-2',
     '/static/js/markdown.mjs',
     '/static/js/lightfield.js',
     '/static/img/avatar-192.webp',
@@ -103,6 +103,7 @@ self.addEventListener('fetch', function (event) {
 
     var url = new URL(request.url);
     if (url.origin !== self.location.origin) return;
+    if (url.pathname.indexOf('/static/gen/') === 0) return;
     if (url.pathname.indexOf('/api/') === 0) return;
     if (url.pathname === '/release.json') return;
 

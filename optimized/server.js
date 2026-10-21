@@ -4,48 +4,34 @@
 //   2. 按文件类型下发缓存策略，静态资源可被浏览器/CDN 复用
 //   3. 静态文件关闭 etag 二次读盘，改用 mtime + 长的 stalez 窗口
 import express from 'express';
-import { createReadStream, readFileSync, statSync } from 'node:fs';
+import './api/_env.js';
+import { createReadStream, statSync } from 'node:fs';
 import { once } from 'node:events';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { API_BASE, MODEL, MAX_TOKENS, TEMPERATURE, buildMessages, textToHtml, getApiKey, IMAGE_MODEL, getImageApiKey } from './api/_config.js';
+import { API_BASE, MODEL, MAX_TOKENS, TEMPERATURE, buildMessages, getApiKey } from './api/_config.js';
+import { IMAGE_MODEL, getImageApiKey } from './api/image_config.js';
 import { renderMarkdown } from './public/static/js/markdown.mjs';
 import { generateImage } from './api/image_gen.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
-// 极简 .env 加载：容器/PM2 已注入的变量优先，这里只做本机补位
-function loadDotEnv() {
-    let raw;
-    try { raw = readFileSync(path.join(__dirname, '.env'), 'utf8'); } catch { return; }
-    for (const line of raw.split(/\r?\n/)) {
-        const trimmed = line.trim();
-        if (!trimmed || trimmed.startsWith('#')) continue;
-        const eq = trimmed.indexOf('=');
-        if (eq < 1) continue;
-        const key = trimmed.slice(0, eq).trim();
-        let value = trimmed.slice(eq + 1).trim();
-        if (/^(['"]).*\1$/.test(value)) value = value.slice(1, -1);
-        if (!(key in process.env)) process.env[key] = value;
-    }
-}
-loadDotEnv();
-
 const PUBLIC_DIR = path.join(__dirname, 'public');
 const app = express();
 const PORT = process.env.PORT || 3000;
-const CLIENT_VERSION = 'qisao-v20261019-3';
+const CLIENT_VERSION = 'qisao-v20261021-2';
 const MODEL_REQUEST_OPTIONS = MODEL === 'zai-org/GLM-5.3-Flash' ? { reasoning_effort: 'low' } : {};
 
 function renderClientAnswer(content, clientVersion) {
     const html = renderMarkdown(content);
     if (clientVersion === CLIENT_VERSION) return html;
-    return html + '<p class="client-update"><a href="/?v=20261019-3">启用新版实时排版（请先保存草稿）</a><br><small>对话记录保留，无需重装。</small></p>';
+    return html + '<p class="client-update"><a href="/?v=20261021-2">启用新版实时排版（请先保存草稿）</a><br><small>对话记录保留，无需重装。</small></p>';
 }
 
 app.disable('x-powered-by');
-// 生图会带参考图 base64，1mb 不够
-app.use(express.json({ limit: '16mb' }));
+app.set('trust proxy', 'loopback');
+app.use('/api/image', express.json({ limit: '16mb' }));
+app.use(express.json({ limit: '1mb' }));
 
 // ---------- 静态资源：预压缩 + 分类缓存 ----------
 // 顺序即优先级：sw.js / manifest 必须排在 .js 之前，否则会被当成普通脚本缓存一天，
@@ -150,9 +136,7 @@ const IMAGE_LIMIT_HOUR = 30;
 const imageHits = new Map();
 
 function clientIp(req) {
-    const forwarded = req.headers['x-forwarded-for'];
-    if (forwarded) return String(forwarded).split(',')[0].trim();
-    return req.socket.remoteAddress || 'unknown';
+    return req.ip || req.socket.remoteAddress || 'unknown';
 }
 
 function allowImage(ip) {

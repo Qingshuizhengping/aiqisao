@@ -41,7 +41,14 @@ const offlineScript = `
   var userInput = document.getElementById('userInput');
   var sendButton = document.getElementById('sendBtn');
   var inputNote = document.getElementById('inputNote');
+  var studioLink = document.querySelector('.studio-entry');
   var fetchOnline = window.fetch.bind(window);
+
+  if (studioLink) {
+    studioLink.title = '需要联网使用素材生成';
+    var studioLabel = studioLink.querySelector('span:not([aria-hidden])');
+    if (studioLabel) studioLabel.textContent = '素材生成 · 需联网';
+  }
 
   window.fetch = function (resource, options) {
     var url = new URL(typeof resource === 'string' ? resource : resource.url, onlineUrl);
@@ -83,6 +90,7 @@ const result = fs.readFileSync(path.join(publicDir, 'index.html'), 'utf8')
   .replace(/<link\b(?=[^>]*\brel=["']manifest["'])[^>]*>\s*/gi, '')
   .replace(/<script\b[^>]*\bsrc=(["'])(\/static\/js\/[^"']+)\1[^>]*>\s*<\/script>/gi, (match, quote, assetPath) => '<script>\n' + inlineScript(assetPath) + '\n</script>')
   .replace(/\b(src|srcset|href)=(["'])(\/static\/img\/[^"']+)\2/g, (match, attribute, quote, assetPath) => attribute + '=' + quote + assetDataUri(assetPath) + quote)
+  .replace(/\bhref=(["'])\/image\1/g, 'href="' + onlineUrl + 'image"')
   .replace('</head>', '<style>.offline-banner.show{flex-shrink:0}.offline-online-button{min-height:44px;margin:8px 0 0 10px;padding:8px 16px;border-radius:999px;font-weight:600}</style>\n</head>')
   .replace('</body>', '<script>\n' + offlineScript + '\n</script>\n</body>');
 

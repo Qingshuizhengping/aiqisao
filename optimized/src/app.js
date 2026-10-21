@@ -33,7 +33,7 @@ import { renderMarkdown } from './markdown.js';
     var conversations = [];
     var currentConvId = null;
     var STORAGE_KEY = 'qisao_conversations';
-    var CLIENT_VERSION = 'qisao-v20261019-3';
+    var CLIENT_VERSION = 'qisao-v20261021-2';
     var DRAFT_KEY = 'qisao_update_draft';
     var updateBanner = document.getElementById('updateBanner');
     var updateAppBtn = document.getElementById('updateAppBtn');

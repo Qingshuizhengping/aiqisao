@@ -16,6 +16,7 @@
     var refThumb = document.getElementById('refThumb');
     var generateBtn = document.getElementById('generateBtn');
     var generateLabel = document.getElementById('generateLabel');
+    var serviceStatus = document.getElementById('serviceStatus');
 
     var stageEmpty = document.getElementById('stageEmpty');
     var stageLoading = document.getElementById('stageLoading');
@@ -40,7 +41,7 @@
     var HISTORY_KEY = 'qisao_studio_history';
     var MAX_HISTORY = 36;
     var MAX_PROMPT = 4000;
-    var REQUEST_TIMEOUT = 180000;
+    var REQUEST_TIMEOUT = 240000;
 
     var DEFAULT_SIZE = '1:1';
     var currentSize = DEFAULT_SIZE;
@@ -50,6 +51,7 @@
     var timerId = 0;
     var startedAt = 0;
     var lastPrompt = '';
+    var serviceReady = true;
 
     /* ------------------------------ 主题 ------------------------------ */
     function applyTheme(theme, persist) {
@@ -92,7 +94,7 @@
 
     function setBusy(busy) {
         isBusy = busy;
-        generateBtn.disabled = busy;
+        generateBtn.disabled = busy || !serviceReady;
         generateLabel.textContent = busy ? '生成中…' : '生成图片';
     }
 
@@ -302,6 +304,10 @@
 
     async function generate() {
         if (isBusy) return;
+        if (!serviceReady) {
+            showError('生图服务尚未启用，请联系管理员配置。');
+            return;
+        }
         var prompt = promptEl.value.trim();
         if (!prompt) {
             promptEl.focus();
@@ -378,6 +384,19 @@
         loadHistory();
         renderHistory();
         setStage('empty');
+
+        fetch('/api/health', { signal: AbortSignal.timeout(8000) }).then(function (response) {
+            if (!response.ok) throw new Error('Service unavailable');
+            return response.json();
+        }).then(function (data) {
+            if (typeof data.imageReady !== 'boolean') return;
+            serviceReady = data.imageReady;
+            setBusy(isBusy);
+            if (serviceStatus && !serviceReady) {
+                serviceStatus.hidden = false;
+                serviceStatus.textContent = '生图服务尚未启用，请联系管理员配置。';
+            }
+        }).catch(function () {});
 
         var params = new URLSearchParams(location.search);
         var seeded = params.get('prompt');

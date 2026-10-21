@@ -136,7 +136,11 @@ HTTPS 使用受信任的 IP 证书，由独立环境中的 Certbot 5.8 管理：
 
 SSH 连接使用部署机器上的 `AIQISAO_SSH_HOST`、`AIQISAO_SSH_USER`、`AIQISAO_SSH_PASSWORD` 环境变量，凭据值不写入仓库、构建产物或日志。Android 继续使用系统 CA 信任与 HTTPS 限制，不为证书错误关闭校验。
 
-当前生产网页与远程 App 入口使用同源 API，已验证正常。内置离线页面恢复联网后的请求属于跨源调用，仍需针对实际 WebView Origin 单独配置服务端 CORS 允许列表；本次未开放通配或 `null` Origin，不能将静态离线页面构建成功视为该跨源链路已通过。
+生产网页与远程 App 入口使用同源 API。内置离线页面只读历史，联网按钮返回 HTTPS 在线版；素材入口也明确跳转 HTTPS，不开放通配或 `null` Origin 跨域。不要通过关闭 TLS 校验或开放 `file:` API 跨域来绕过错误。
+
+新增 `/image` 素材入口由 `/api/image` 提供服务；`/api/health` 的 `imageReady` 只表示服务端是否配置密钥，不代表额度或真实生成已验证。`HUNYUAN_API_KEY`（或 `TOKENHUB_API_KEY`）仅放服务器环境或私有 `.env`，不要写入前端、仓库、日志。未配置时页面明确提示未启用，不调用收费接口。生成记录在本机；每次生成后，服务器按 24 小时时效和 160 张数量规则清理图片，请及时下载。
+
+部署保留 `/opt/ai-qisao/api/_config.js`、`.env`、TLS 和既有生成图/下载，不把仓库默认聊天模型覆盖到生产。新生图模块独立位于 `api/_env.js`、`api/image_config.js`、`api/image_gen.js`。`.env` 在读取生图模型配置前加载，已有进程环境变量优先。Nginx 的 `/api/image` 需允许 `client_max_body_size 16m` 和至少 240 秒代理读超时；聊天接口仍保持 1MB 请求体限制。
 
 ### 素材生成（生图）独立入口
 
