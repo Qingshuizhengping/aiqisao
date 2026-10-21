@@ -138,7 +138,7 @@ async function readLimitedBody(response, signal, maxBytes) {
 function imageDownloadUrl(value) {
     let url;
     try { url = new URL(value); } catch { throw httpError(502, '上游图片地址无效'); }
-    const knownHost = /^(?:aigc-output-image-file|hunyuan-image-result-tob)-\d+\.cos\.[a-z0-9-]+\.myqcloud\.com$/i.test(url.hostname)
+    const knownHost = /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?-\d+\.cos\.[a-z]{2}-[a-z0-9-]+\.myqcloud\.com$/i.test(url.hostname)
         || url.hostname === 'aigc-image.cos.myqcloud.com';
     if (url.protocol !== 'https:' || !knownHost || url.username || url.password || url.port
         || /[\u0000-\u0020\u007f]/.test(String(value))) {
