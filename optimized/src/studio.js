@@ -38,6 +38,7 @@
     var stageClarification = document.getElementById('stageClarification');
     var clarificationQuestion = document.getElementById('clarificationQuestion');
     var clarificationEdit = document.getElementById('clarificationEdit');
+    var clarificationHint = document.querySelector('#stageClarification small');
     var optimizationDetails = document.getElementById('optimizationDetails');
     var originalPromptDisplay = document.getElementById('originalPromptDisplay');
     var optimizedPromptDisplay = document.getElementById('optimizedPromptDisplay');
@@ -50,6 +51,7 @@
     var themeToggle = document.getElementById('themeToggle');
 
     var HISTORY_KEY = 'qisao_studio_history';
+    var PENDING_JOB_KEY = 'qisao_studio_pending_job';
     var MAX_HISTORY = 36;
     var MAX_PROMPT = 4000;
     var REQUEST_TIMEOUT = 240000;
@@ -71,6 +73,13 @@
     var activePhase = 'generate';
     var pendingOriginalSnapshot = null;
     var uncertainGeneration = false;
+    var jobsReady = false;
+    var pendingJob = null;
+    var jobSnapshot = null;
+    var jobPolling = false;
+    var jobPollTimer = null;
+    var pendingNeedsUpload = false;
+    var requiredReferenceUploadCount = 0;
 
     /* ------------------------------ 主题 ------------------------------ */
     function applyTheme(theme, persist) {
@@ -109,7 +118,7 @@
     }
 
     function syncControls() {
-        var locked = isBusy || isReadingReferences;
+        var locked = isBusy || isReadingReferences || !!pendingJob;
         generateBtn.disabled = locked || healthPending || !serviceReady;
         generateLabel.textContent = isBusy ? activePhase === 'prepare' ? '正在优化视觉…' : '生成中…' : isReadingReferences ? '正在读取图片…' : healthPending ? '正在检查服务…' : optimizationReady && optimizeToggle.checked ? '视觉优化并生成' : '生成图片';
         refInput.disabled = locked || references.length >= MAX_REFERENCES;
@@ -117,21 +126,22 @@
         refClear.disabled = locked;
         asRefBtn.disabled = locked || references.length >= MAX_REFERENCES;
         againBtn.disabled = locked;
-        errorRetry.disabled = locked;
+        errorRetry.disabled = pendingJob ? !pendingNeedsUpload || jobPolling : locked;
         useOriginalBtn.disabled = locked || !pendingOriginalSnapshot || !serviceReady;
         clarificationEdit.disabled = locked;
         promptEl.disabled = locked;
         optimizeToggle.disabled = locked || !optimizationReady;
         refPreview.setAttribute('aria-busy', String(isReadingReferences));
         document.querySelectorAll('#refPreview .ref-remove, #sizeChips .size-chip, #presets .chip').forEach(function (button) { button.disabled = locked; });
-        if (refCount) refCount.textContent = references.length + ' / ' + MAX_REFERENCES + ' 张' + (isReadingReferences ? ' · 正在读取…' : '');
+        if (refCount) refCount.textContent = references.length + ' / ' + MAX_REFERENCES + ' 张' + (isReadingReferences ? ' · 正在读取…' : pendingJob && !jobSnapshot && pendingJob.referenceCount ? ' · 后台任务已上传 ' + pendingJob.referenceCount + ' 张' : '');
+        if (clarificationHint) clarificationHint.textContent = requiredReferenceUploadCount ? '此任务原有 ' + requiredReferenceUploadCount + ' 张参考图，请重新上传至少一张后再提交。尺寸已保留。' : references.length ? '参考图和尺寸已保留，请在上方描述中补充后重新生成。' : '尺寸已保留，请在上方描述中补充后重新生成。';
         optimizeStatus.textContent = optimizationReady ? optimizeToggle.checked ? '保留原意，完善构图、光线、色彩与质感；仅理解文字，不额外上传参考图。' : '已关闭视觉优化，将直接使用你的原始描述。' : optimizationAvailableText;
     }
 
     function showError(message) {
         setStage('error');
         errorText.textContent = message || '生成失败，请稍后重试';
-        errorRetry.textContent = uncertainGeneration ? '重新生成（可能重复计费）' : '重新提交';
+        errorRetry.textContent = pendingNeedsUpload ? '继续上传原任务' : uncertainGeneration ? '重新生成（可能重复计费）' : '重新提交';
     }
 
     function invalidatePreparedInput() {
@@ -278,6 +288,7 @@
                 additions.push(reference);
             }
             references = references.concat(additions);
+            requiredReferenceUploadCount = 0;
             return true;
         } catch (error) {
             showError(error.message || '参考图读取失败，换一张试试');
@@ -490,6 +501,217 @@
         return !uncertainGeneration || window.confirm('上一次生成可能仍在处理或已经计费。重新生成可能重复计费，是否继续？');
     }
 
+    function persistPendingJob() {
+        localStorage.setItem(PENDING_JOB_KEY, JSON.stringify(pendingJob));
+    }
+
+    function clearJobPoll() {
+        if (jobPollTimer !== null) clearTimeout(jobPollTimer);
+        jobPollTimer = null;
+    }
+
+    function finishPendingJob() {
+        clearJobPoll();
+        try { localStorage.removeItem(PENDING_JOB_KEY); } catch (error) {}
+        pendingJob = null;
+        jobSnapshot = null;
+        pendingNeedsUpload = false;
+        setBusy(false);
+    }
+
+    function canResumeUpload() {
+        return !!(pendingJob && !pendingJob.accepted && jobSnapshot && Date.now() - pendingJob.createdAt < 600000);
+    }
+
+    function scheduleJobPoll() {
+        clearJobPoll();
+        if (!pendingJob || pendingNeedsUpload || document.hidden) return;
+        jobPollTimer = setTimeout(pollBackgroundJob, 2000);
+    }
+
+    async function jobRequest(path, method, payload, record) {
+        var response = await fetch(path, {
+            method: method,
+            headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + record.token },
+            body: payload ? JSON.stringify(payload) : undefined,
+            cache: 'no-store',
+            signal: AbortSignal.timeout(method === 'POST' ? 60000 : 10000)
+        });
+        var data;
+        try { data = await response.json(); } catch (error) {}
+        if (!response.ok || !data || data.status !== 'ok' || !data.job) {
+            var failure = new Error(data && typeof data.error === 'string' ? data.error : '后台任务暂时无法连接，请稍后恢复查询。');
+            failure.httpStatus = response.status;
+            throw failure;
+        }
+        return data.job;
+    }
+
+    function applyJobState(job, record) {
+        if (pendingJob !== record) return;
+        var states = ['queued', 'optimizing', 'generating', 'succeeded', 'needs_clarification', 'failed', 'interrupted'];
+        if (job.id !== record.id || states.indexOf(job.state) === -1 || job.originalPrompt !== record.prompt || job.size !== record.size || job.referenceCount !== record.referenceCount) {
+            throw new Error('后台任务信息与本次需求不一致，已停止同步，请保留此页稍后重试。');
+        }
+        record.accepted = true;
+        pendingNeedsUpload = false;
+        try { persistPendingJob(); } catch (error) {}
+        var snapshot = jobSnapshot || { prompt: record.prompt, inputPrompt: record.prompt, size: record.size, referenceImages: [], optimizationEnabled: record.optimizationEnabled };
+        var prepared = null;
+        if (job.optimization && job.optimization.originalPrompt === record.prompt && typeof job.optimization.optimizedPrompt === 'string' && job.optimization.optimizedPrompt.trim()) {
+            prepared = job.optimization;
+            showOptimization(snapshot, prepared);
+        }
+        if (job.state === 'queued' || job.state === 'optimizing' || job.state === 'generating') {
+            setLoadingPhase(job.state === 'generating' ? 'generate' : record.optimizationEnabled ? 'prepare' : 'generate');
+            loadingText.textContent = job.state === 'queued' ? '已提交后台，可切换应用或锁屏，返回后自动同步…' : job.state === 'optimizing' ? '后台正在优化视觉，完成后自动生成；可切换应用或锁屏…' : '后台正在生成并保存，可切换应用或锁屏，返回后自动同步…';
+            setStage('loading');
+            setBusy(true);
+            return;
+        }
+        if (job.state === 'succeeded') {
+            if (!job.result || typeof job.result.url !== 'string' || !job.result.url) throw new Error('后台结果暂未确认，正在继续同步，请勿重复提交。');
+            showResult(job.result, snapshot, prepared);
+            finishPendingJob();
+            return;
+        }
+        var originalSnapshot = jobSnapshot;
+        if (!originalSnapshot && record.referenceCount && !references.length) requiredReferenceUploadCount = record.referenceCount;
+        var referenceReminder = !originalSnapshot && record.referenceCount ? '\n重新提交时请重新上传参考图，本设备不会保存参考图片。' : '';
+        finishPendingJob();
+        if (job.state === 'needs_clarification') {
+            clarificationQuestion.textContent = (typeof job.question === 'string' && job.question.trim() ? job.question : '请补充主体和画面需求后重新提交。') + referenceReminder;
+            setStage('clarification');
+            return;
+        }
+        uncertainGeneration = job.state === 'interrupted' || job.state === 'failed' && job.code === 'IMAGE_GENERATION_UNKNOWN';
+        if (job.allowOriginal === true && job.code === 'OPTIMIZATION_UNAVAILABLE' && originalSnapshot && snapshotMatches(originalSnapshot)) {
+            pendingOriginalSnapshot = originalSnapshot;
+            useOriginalBtn.hidden = false;
+        }
+        showError((typeof job.error === 'string' && job.error ? job.error : job.state === 'interrupted' ? '后台服务已重启，本次任务结果未确认，未自动重复生成。请先检查历史图片，再决定是否重新提交。' : '后台任务未完成，请调整描述或重新提交。') + referenceReminder);
+        syncControls();
+    }
+
+    async function pollBackgroundJob() {
+        clearJobPoll();
+        if (!pendingJob || jobPolling || document.hidden) return;
+        var record = pendingJob;
+        jobPolling = true;
+        try {
+            applyJobState(await jobRequest('/api/image/jobs/' + encodeURIComponent(record.id), 'GET', null, record), record);
+        } catch (error) {
+            if (pendingJob !== record) return;
+            if (error.httpStatus === 404) {
+                if (canResumeUpload()) {
+                    pendingNeedsUpload = true;
+                    showError('尚未确认上传完成，服务器暂未找到任务。可继续上传同一个任务，不会主动新建重复任务。');
+                } else {
+                    uncertainGeneration = record.accepted;
+                    if (!jobSnapshot && record.referenceCount && !references.length) requiredReferenceUploadCount = record.referenceCount;
+                    finishPendingJob();
+                    showError('后台任务已过期或无法找回，不会自动重新生成。请先检查最近生成；需要重新提交时请重新上传参考图。');
+                }
+            } else {
+                loadingText.textContent = '连接暂时中断，后台任务可能仍在处理；保持此页或返回后会自动同步，请勿重复提交。';
+                setStage('loading');
+            }
+        } finally {
+            jobPolling = false;
+            syncControls();
+            scheduleJobPoll();
+        }
+    }
+
+    async function uploadBackgroundJob() {
+        if (!pendingJob || !jobSnapshot || jobPolling) return;
+        var record = pendingJob;
+        if (record.accepted || Date.now() - record.createdAt >= 600000) {
+            pendingNeedsUpload = false;
+            await pollBackgroundJob();
+            return;
+        }
+        clearJobPoll();
+        jobPolling = true;
+        pendingNeedsUpload = false;
+        setBusy(true);
+        setStage('loading');
+        loadingText.textContent = '正在上传，完成后可切到后台…';
+        var payload = { requestId: record.id, prompt: jobSnapshot.prompt, size: jobSnapshot.size, optimize: jobSnapshot.optimizationEnabled };
+        if (jobSnapshot.referenceImages.length) payload.referenceImages = jobSnapshot.referenceImages.slice();
+        try {
+            applyJobState(await jobRequest('/api/image/jobs', 'POST', payload, record), record);
+        } catch (error) {
+            if (pendingJob !== record) return;
+            if (error.httpStatus >= 400 && error.httpStatus < 500 && error.httpStatus !== 408) {
+                uncertainGeneration = error.httpStatus === 409;
+                finishPendingJob();
+                showError(error.message || '任务未能提交，请重新检查输入。');
+            } else {
+                loadingText.textContent = '正在确认后台任务是否已接收，请勿重复提交…';
+                setStage('loading');
+            }
+        } finally {
+            jobPolling = false;
+            syncControls();
+            if (pendingJob === record) await pollBackgroundJob();
+        }
+    }
+
+    async function startBackgroundJob(snapshot) {
+        var tokenBytes = new Uint8Array(32);
+        window.crypto.getRandomValues(tokenBytes);
+        pendingJob = {
+            id: newRequestId(),
+            token: Array.from(tokenBytes, function (byte) { return byte.toString(16).padStart(2, '0'); }).join(''),
+            createdAt: Date.now(),
+            accepted: false,
+            prompt: snapshot.prompt,
+            size: snapshot.size,
+            referenceCount: snapshot.referenceImages.length,
+            optimizationEnabled: snapshot.optimizationEnabled
+        };
+        jobSnapshot = snapshot;
+        try { persistPendingJob(); } catch (error) {
+            pendingJob = null;
+            jobSnapshot = null;
+            throw new Error('浏览器无法保存后台任务凭据，尚未提交生成。请允许本站本地存储后重试。');
+        }
+        await uploadBackgroundJob();
+    }
+
+    function restorePendingJob() {
+        try {
+            var raw = localStorage.getItem(PENDING_JOB_KEY);
+            if (!raw) return false;
+            var record = JSON.parse(raw);
+            if (!record || !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(record.id) || !/^[0-9a-f]{64}$/.test(record.token) || typeof record.prompt !== 'string' || !record.prompt.trim() || record.prompt.length > MAX_PROMPT || ['auto', '1:1', '3:4', '4:3', '9:16', '16:9'].indexOf(record.size) === -1 || !Number.isInteger(record.referenceCount) || record.referenceCount < 0 || record.referenceCount > MAX_REFERENCES || !Number.isFinite(record.createdAt) || typeof record.accepted !== 'boolean' || typeof record.optimizationEnabled !== 'boolean') {
+                localStorage.removeItem(PENDING_JOB_KEY);
+                return false;
+            }
+            pendingJob = record;
+            promptEl.value = record.prompt;
+            lastPrompt = record.prompt;
+            currentSize = record.size;
+            sizeChips.querySelectorAll('.size-chip').forEach(function (chip) { chip.setAttribute('aria-pressed', String(chip.dataset.size === currentSize)); });
+            if (sizeNote) sizeNote.textContent = currentSize === 'auto' ? '自动 · 模型自适应' : currentSize + ' · 2K';
+            syncCharCount();
+            setLoadingPhase(record.optimizationEnabled ? 'prepare' : 'generate');
+            loadingText.textContent = '正在恢复后台任务，确认结果前不会重复生成…';
+            setStage('loading');
+            setBusy(true);
+            return true;
+        } catch (error) {
+            return false;
+        }
+    }
+
+    function wakeBackgroundJob() {
+        if (!pendingJob || document.hidden) return;
+        clearJobPoll();
+        if (!pendingNeedsUpload) pollBackgroundJob();
+    }
+
     async function sendImage(snapshot, prepared) {
         if (!snapshotMatches(snapshot)) throw new Error('输入已变化，本次准备已取消，请重新生成。');
         var payload = {
@@ -554,7 +776,11 @@
     }
 
     async function generate() {
-        if (isBusy || isReadingReferences || healthPending) return;
+        if (isBusy || pendingJob || isReadingReferences || healthPending) return;
+        if (requiredReferenceUploadCount && !references.length) {
+            showError('原任务有 ' + requiredReferenceUploadCount + ' 张参考图。请先重新上传至少一张参考图，再提交生成，避免误用纯文字生成。');
+            return;
+        }
         if (!serviceReady) {
             showError('生图服务尚未启用，请联系管理员配置。');
             return;
@@ -579,13 +805,17 @@
         setStage('loading');
 
         try {
+            if (jobsReady) {
+                await startBackgroundJob(snapshot);
+                return;
+            }
             var prepared = snapshot.optimizationEnabled ? await prepareImage(snapshot) : null;
             if (snapshot.optimizationEnabled && !prepared) return;
             await sendImage(snapshot, prepared);
         } catch (e) {
             showError(e && e.message ? e.message : '生成失败，请稍后重试');
         } finally {
-            setBusy(false);
+            if (!pendingJob) setBusy(false);
         }
     }
 
@@ -598,6 +828,11 @@
         generate();
     });
     errorRetry.addEventListener('click', function () {
+        if (pendingJob) {
+            if (pendingNeedsUpload && canResumeUpload()) uploadBackgroundJob();
+            else pollBackgroundJob();
+            return;
+        }
         generate();
     });
     useOriginalBtn.addEventListener('click', async function () {
@@ -614,11 +849,15 @@
         setBusy(true);
         setStage('loading');
         try {
+            if (jobsReady) {
+                await startBackgroundJob(Object.assign({}, snapshot, { optimizationEnabled: false }));
+                return;
+            }
             await sendImage(snapshot, null);
         } catch (error) {
             showError(error.message || '生成失败，请稍后重试');
         } finally {
-            setBusy(false);
+            if (!pendingJob) setBusy(false);
         }
     });
     clarificationEdit.addEventListener('click', function () {
@@ -656,6 +895,8 @@
         setStage('empty');
         if (sizeNote) sizeNote.textContent = '默认 1:1 · 2K';
         renderReferences();
+        var hasPendingJob = restorePendingJob();
+        if (hasPendingJob) pollBackgroundJob();
 
         fetch('/api/health', { signal: AbortSignal.timeout(8000) }).then(function (response) {
             if (!response.ok) throw new Error('Service unavailable');
@@ -663,10 +904,11 @@
         }).then(function (data) {
             var modeIsText = data.promptOptimizationMode === undefined || data.promptOptimizationMode === 'text';
             var secureFeatures = !!(window.crypto && window.crypto.subtle && window.crypto.getRandomValues && window.TextEncoder);
+            jobsReady = data.imageJobsReady === true && secureFeatures;
             optimizationReady = data.promptOptimizationReady === true && modeIsText && secureFeatures;
             if (data.promptOptimizationReady === true && !modeIsText) optimizationAvailableText = '当前视觉优化模式暂不支持，将按原始描述生成。';
             else if (data.promptOptimizationReady === true && !secureFeatures) optimizationAvailableText = '视觉优化需要 HTTPS 安全连接及新版浏览器；当前可直接使用原词生成。';
-            optimizeToggle.checked = optimizationReady;
+            optimizeToggle.checked = pendingJob ? pendingJob.optimizationEnabled : optimizationReady;
             if (typeof data.imageReady === 'boolean') serviceReady = data.imageReady;
             healthPending = false;
             setBusy(isBusy);
@@ -683,12 +925,21 @@
 
         var params = new URLSearchParams(location.search);
         var seeded = params.get('prompt');
-        if (seeded) {
+        if (seeded && !hasPendingJob) {
             promptEl.value = seeded.slice(0, MAX_PROMPT);
             syncCharCount();
         }
 
         if (themeToggle) themeToggle.addEventListener('click', toggleTheme);
+        document.addEventListener('visibilitychange', function () {
+            if (document.hidden) clearJobPoll();
+            else wakeBackgroundJob();
+        });
+        if (typeof window.addEventListener === 'function') {
+            window.addEventListener('pageshow', wakeBackgroundJob);
+            window.addEventListener('online', wakeBackgroundJob);
+            window.addEventListener('pagehide', clearJobPoll);
+        }
     }
 
     init();

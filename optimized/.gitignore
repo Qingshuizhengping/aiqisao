@@ -6,6 +6,7 @@ build/
 
 # 生成图运行期落盘，不入库
 public/static/gen/
+var/
 
 # Python
 __pycache__/

@@ -64,7 +64,7 @@ remote_archive="/tmp/$(basename "$local_stage").tgz"
 trap 'rm -f -- "$archive"; rmdir -- "$local_stage"' EXIT
 tar czf "$archive" --exclude='public/static/gen' --exclude='public/downloads' \
     --exclude='*/.*' --exclude='*.apk' --exclude='*.aab' --exclude='*.pem' --exclude='*.key' \
-    server.js api/_env.js api/image_config.js api/image_gen.js api/image_prompt.js public package.json package-lock.json
+    server.js api/_env.js api/image_config.js api/image_gen.js api/image_prompt.js api/image_jobs.js public package.json package-lock.json
 
 # 3. 上传
 echo "==> 上传到 $REMOTE"
@@ -89,7 +89,7 @@ if not app.is_absolute() or app.resolve() != app or len(app.parts) < 3:
     raise SystemExit('Unsafe or symbolic application directory')
 if not app.is_dir() or not (app / 'api/_config.js').is_file():
     raise SystemExit('Initial setup required: configure api/_config.js and provider credentials before deploying; the default model is never installed automatically.')
-required = {'server.js', 'api/_env.js', 'api/image_config.js', 'api/image_gen.js', 'api/image_prompt.js', 'package.json', 'package-lock.json'}
+required = {'server.js', 'api/_env.js', 'api/image_config.js', 'api/image_gen.js', 'api/image_prompt.js', 'api/image_jobs.js', 'package.json', 'package-lock.json'}
 seen = set()
 with tarfile.open(sys.argv[2]) as bundle:
     for member in bundle.getmembers():
@@ -122,7 +122,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 const [file, app, name] = process.argv.slice(2);
 const processes = JSON.parse(fs.readFileSync(file, 'utf8')).filter(entry => entry.name === name);
-if (processes.length !== 1 || path.resolve(processes[0].pm2_env.pm_exec_path) !== path.join(app, 'server.js')) throw new Error('Existing ai-qisao process does not match APP_DIR; initialize the configured application first.');
+if (processes.length !== 1 || processes[0].pm2_env.exec_mode !== 'fork_mode' || path.resolve(processes[0].pm2_env.pm_exec_path) !== path.join(app, 'server.js')) throw new Error('Expected one fork-mode ai-qisao process matching APP_DIR; initialize the configured application first.');
 const port = String(processes[0].pm2_env.PORT || 3000);
 if (!/^\d+$/.test(port) || Number(port) < 1 || Number(port) > 65535) throw new Error('Invalid application port');
 process.stdout.write(port);

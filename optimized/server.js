@@ -13,19 +13,22 @@ import { API_BASE, MODEL, MAX_TOKENS, TEMPERATURE, buildMessages, getApiKey } fr
 import { IMAGE_MODEL, getImageApiKey } from './api/image_config.js';
 import { renderMarkdown } from './public/static/js/markdown.mjs';
 import { generateImageRequest, getPromptOptimizationHealth, prepareImagePrompt } from './api/image_prompt.js';
+import { createImageJobService } from './api/image_jobs.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 const PUBLIC_DIR = path.join(__dirname, 'public');
 const app = express();
 const PORT = process.env.PORT || 3000;
-const CLIENT_VERSION = 'qisao-v20261021-6';
+const CLIENT_VERSION = 'qisao-v20261021-7';
+const imageJobs = createImageJobService({ storeDirectory: path.join(__dirname, 'var', 'image-jobs'), getApiKey: getImageApiKey });
+let imageJobsReady = false;
 const MODEL_REQUEST_OPTIONS = MODEL === 'zai-org/GLM-5.3-Flash' ? { reasoning_effort: 'low' } : {};
 
 function renderClientAnswer(content, clientVersion) {
     const html = renderMarkdown(content);
     if (clientVersion === CLIENT_VERSION) return html;
-    return html + '<p class="client-update"><a href="/?v=20261021-6">启用新版实时排版（请先保存草稿）</a><br><small>对话记录保留，无需重装。</small></p>';
+    return html + '<p class="client-update"><a href="/?v=20261021-7">启用新版实时排版（请先保存草稿）</a><br><small>对话记录保留，无需重装。</small></p>';
 }
 
 app.disable('x-powered-by');
@@ -135,6 +138,7 @@ app.get('/api/health', (req, res) => res.json({
     model: MODEL,
     imageModel: IMAGE_MODEL,
     imageReady: Boolean(getImageApiKey()),
+    imageJobsReady,
     ...getPromptOptimizationHealth(),
 }));
 
@@ -199,6 +203,33 @@ function imageError(res, error) {
     if (error?.allowOriginal === true) body.allowOriginal = true;
     return res.status(status).json(body);
 }
+
+function imageJobToken(req) {
+    const match = /^Bearer ([a-f0-9]{64})$/i.exec(req.get('Authorization') || '');
+    return match ? match[1] : '';
+}
+
+app.post('/api/image/jobs', async (req, res) => {
+    res.setHeader('Cache-Control', 'no-store');
+    if (!imageJobsReady) return res.status(503).json({ status: 'error', error: '后台任务服务正在准备，请稍后再试。' });
+    try {
+        const result = await imageJobs.createJob(req.body || {}, imageJobToken(req), clientIp(req));
+        if (!res.destroyed && !res.writableEnded) return res.status(202).json(result);
+    } catch (error) {
+        return imageError(res, error);
+    }
+});
+
+app.get('/api/image/jobs/:id', async (req, res) => {
+    res.setHeader('Cache-Control', 'no-store');
+    if (!imageJobsReady) return res.status(503).json({ status: 'error', error: '后台任务服务正在准备，请稍后再试。' });
+    try {
+        const result = await imageJobs.getJob(req.params.id, imageJobToken(req));
+        return res.json(result);
+    } catch (error) {
+        return imageError(res, error);
+    }
+});
 
 app.post('/api/image/prepare', async (req, res) => {
     res.setHeader('Cache-Control', 'no-store');
@@ -388,7 +419,15 @@ app.post('/api/query_stream', async (req, res) => {
     }
 });
 
-app.listen(PORT, '0.0.0.0', () => {
+if (process.env.NODE_APP_INSTANCE && process.env.NODE_APP_INSTANCE !== '0') throw new Error('后台任务仅支持单实例部署。');
+app.listen(PORT, '0.0.0.0', async () => {
+    try {
+        await imageJobs.init();
+        imageJobsReady = true;
+    } catch {
+        console.error('后台任务存储初始化失败，服务已停止。');
+        process.exit(1);
+    }
     console.log(`AI七嫂服务已启动: http://0.0.0.0:${PORT}`);
     console.log(`模型: ${MODEL} | API_KEY: ${getApiKey() ? '已配置' : '未配置'}`);
 });
