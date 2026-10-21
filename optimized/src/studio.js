@@ -53,7 +53,6 @@
     var MAX_HISTORY = 36;
     var MAX_PROMPT = 4000;
     var REQUEST_TIMEOUT = 240000;
-    var PREPARE_TIMEOUT = 30000;
     var MAX_REFERENCES = 20;
     var MAX_REFERENCE_FILE_BYTES = 20 * 1024 * 1024;
     var MAX_REFERENCE_CHARS = 14000000;
@@ -100,7 +99,7 @@
 
     function setLoadingPhase(phase) {
         activePhase = phase;
-        loadingText.textContent = phase === 'prepare' ? '正在优化构图、光线与色彩…' : '正在生成并保存…';
+        loadingText.textContent = phase === 'prepare' ? '正在优化视觉，完成后自动生成…' : '正在生成并保存…';
         syncControls();
     }
 
@@ -435,7 +434,7 @@
 
     async function postJson(path, payload, timeout) {
         var controller = new AbortController();
-        var timer = setTimeout(function () { controller.abort(); }, timeout);
+        var timer = timeout > 0 ? setTimeout(function () { controller.abort(); }, timeout) : null;
         try {
             var resp = await fetch(path, {
                 method: 'POST',
@@ -461,7 +460,7 @@
             transportError.transport = true;
             throw transportError;
         } finally {
-            clearTimeout(timer);
+            if (timer !== null) clearTimeout(timer);
         }
     }
 
@@ -527,7 +526,7 @@
                 size: snapshot.size,
                 referenceHashes: hashes,
                 requestId: preparationRequestId
-            }, PREPARE_TIMEOUT);
+            }, 0);
         } catch (error) {
             var canUseOriginal = error.transport || ([502, 503, 504].indexOf(error.httpStatus) !== -1 && error.code === 'OPTIMIZATION_UNAVAILABLE' && error.allowOriginal);
             if (canUseOriginal && snapshotMatches(snapshot)) {

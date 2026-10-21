@@ -248,7 +248,7 @@ export function createImagePromptService({ env = process.env, fetchImpl = (...ar
         const model = env.PROMPT_OPTIMIZER_MODEL || MODEL;
         const requestedTimeout = Number(env.PROMPT_OPTIMIZER_TIMEOUT_MS);
         const timeout = Number.isFinite(requestedTimeout) && requestedTimeout > 0
-            ? Math.min(20000, Math.max(1000, Math.floor(requestedTimeout))) : 20000;
+            ? Math.min(900000, Math.max(1000, Math.floor(requestedTimeout))) : 0;
         let validBase = false;
         try {
             const url = new URL(base);
@@ -304,7 +304,7 @@ export function createImagePromptService({ env = process.env, fetchImpl = (...ar
         const abort = () => controller.abort();
         signal?.addEventListener('abort', abort, { once: true });
         let timedOut = false;
-        const timeout = setTimer(() => { timedOut = true; controller.abort(); }, config.timeout);
+        const timeout = config.timeout > 0 ? setTimer(() => { timedOut = true; controller.abort(); }, config.timeout) : null;
         try {
             checkSignal(signal);
             consumeGlobal(optimizationCalls, unavailable());
@@ -332,7 +332,7 @@ export function createImagePromptService({ env = process.env, fetchImpl = (...ar
             if (timedOut) throw unavailable(504);
             throw safeFailure(error, unavailable(502));
         } finally {
-            clearTimer(timeout);
+            if (timeout !== null) clearTimer(timeout);
             signal?.removeEventListener('abort', abort);
             controller.abort();
             activeOptimizations--;
