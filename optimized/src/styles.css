@@ -292,6 +292,8 @@ button, a { touch-action: manipulation; }
 .icon-sparkles { --icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.7' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M11.017 2.814a1 1 0 0 1 1.966 0l1.051 5.558a2 2 0 0 0 1.594 1.594l5.558 1.051a1 1 0 0 1 0 1.966l-5.558 1.051a2 2 0 0 0-1.594 1.594l-1.051 5.558a1 1 0 0 1-1.966 0l-1.051-5.558a2 2 0 0 0-1.594-1.594l-5.558-1.051a1 1 0 0 1 0-1.966l5.558-1.051a2 2 0 0 0 1.594-1.594z'/%3E%3Ccircle cx='4' cy='20' r='2'/%3E%3C/svg%3E"); }
 .icon-sun { --icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.7' stroke-linecap='round'%3E%3Ccircle cx='12' cy='12' r='4.2'/%3E%3Cpath d='M12 2.6v2.2M12 19.2v2.2M4.2 12H2M22 12h-2.2M6.4 6.4 4.9 4.9M19.1 19.1l-1.5-1.5M17.6 6.4l1.5-1.5M4.9 19.1l1.5-1.5'/%3E%3C/svg%3E"); }
 .icon-moon { --icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.7' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M20.5 14.4A8.5 8.5 0 0 1 9.6 3.5a8.5 8.5 0 1 0 10.9 10.9z'/%3E%3C/svg%3E"); }
+.icon-image { --icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect width='18' height='18' x='3' y='3' rx='3'/%3E%3Ccircle cx='9' cy='9' r='1.6'/%3E%3Cpath d='m21 15-4.6-4.6a2 2 0 0 0-2.8 0L4 20'/%3E%3C/svg%3E"); }
+.icon-back { --icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m15 18-6-6 6-6'/%3E%3C/svg%3E"); }
 
 /* 头像 */
 .avatar-frame, .qisao-avatar {
@@ -365,6 +367,15 @@ button, a { touch-action: manipulation; }
 }
 
 .new-chat-plus { margin-left: auto; font-size: 19px; line-height: 1; font-weight: 300; color: var(--secondary); }
+
+/* 独立生图入口 */
+.studio-entry {
+    margin: -14px 0 20px;
+    color: var(--secondary);
+    text-decoration: none;
+}
+.studio-entry:not(:disabled):hover { color: var(--accent-ink); }
+.studio-entry .new-chat-plus { font-size: 15px; }
 
 .sidebar-section-label { padding: 0 10px; color: var(--muted); font-size: 10px; letter-spacing: .8px; }
 

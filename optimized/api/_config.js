@@ -104,3 +104,15 @@ export function buildMessages(question, history) {
 export function getApiKey() {
     return process.env.SILICONFLOW_API_KEY || '';
 }
+
+/* ------------------------------ 生图（混元 Hy Image 3.5） ------------------------------ */
+export const IMAGE_API_URL = process.env.HUNYUAN_IMAGE_API_URL
+    || 'https://tokenhub.tencentmaas.com/v1/wand/hunyuan-image/v35-generation';
+export const IMAGE_MODEL = process.env.HUNYUAN_IMAGE_MODEL || 'hy-image-v3.5-preview';
+// 同步接口，出图慢，给足 150s
+export const IMAGE_TIMEOUT = 150000;
+
+// 只允许服务端配置，绝不接受前端传入 Key
+export function getImageApiKey() {
+    return process.env.HUNYUAN_API_KEY || process.env.TOKENHUB_API_KEY || '';
+}

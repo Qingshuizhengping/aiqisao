@@ -8,7 +8,7 @@
  *
  * 发版时把 VERSION 改掉即可强制刷新缓存。
  */
-var VERSION = 'qisao-v20261019-3';
+var VERSION = 'qisao-v20261021-1';
 
 var PRECACHE = [
     '/',

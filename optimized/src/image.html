@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="light">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="theme-color" media="(prefers-color-scheme: light)" content="#ffffff">
+<meta name="theme-color" media="(prefers-color-scheme: dark)" content="#08090b">
+<meta name="description" content="薇之雨 · 素材生成 — 产品图、海报、朋友圈与直播素材一键出图。">
+<meta name="color-scheme" content="light dark">
+<title>素材生成 · 薇之雨</title>
+
+<link rel="manifest" href="/manifest.json">
+<link rel="icon" type="image/png" sizes="192x192" href="/static/img/icon-192.png">
+<link rel="apple-touch-icon" href="/static/img/apple-touch-icon.png">
+
+<script>
+(function () {
+    var root = document.documentElement;
+    var theme = 'light';
+    try {
+        var saved = localStorage.getItem('qisao_theme');
+        theme = saved === 'dark' || saved === 'light'
+            ? saved
+            : (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+    } catch (e) {}
+    root.dataset.theme = theme;
+    var h = (window.visualViewport ? window.visualViewport.height : window.innerHeight);
+    if (h) root.style.setProperty('--app-height', h + 'px');
+})();
+</script>
+
+<style>
+/*__STYLES__*/
+</style>
+<style>
+/*__STUDIO_STYLES__*/
+</style>
+</head>
+<body class="studio-body">
+
+<div class="backdrop" aria-hidden="true"></div>
+
+<main class="studio">
+    <header class="studio-head">
+        <a class="icon-button glass studio-back" href="/" aria-label="返回对话">
+            <span class="ui-icon icon-back" aria-hidden="true"></span>
+        </a>
+        <div class="studio-heading">
+            <h1>素材生成</h1>
+            <span>产品图 · 海报 · 朋友圈 · 直播素材</span>
+        </div>
+        <button class="theme-toggle glass" id="themeToggle" type="button" aria-label="切换深色模式" aria-pressed="false">
+            <span class="ui-icon icon-sun" aria-hidden="true"></span>
+            <span class="ui-icon icon-moon" aria-hidden="true"></span>
+        </button>
+    </header>
+
+    <div class="studio-scroll">
+        <div class="studio-grid">
+
+            <section class="studio-form glass glass--lens" aria-label="生成设置">
+                <div class="field">
+                    <div class="field-head">
+                        <label for="prompt">想生成什么</label>
+                        <span class="char-count" id="charCount">0 / 4000</span>
+                    </div>
+                    <textarea id="prompt" rows="5" placeholder="例：哑银外盒的产品平铺图，浅色花纹背景，柔光打亮，高级质感，留白供后期加字"></textarea>
+                </div>
+
+                <div class="presets" id="presets" aria-label="常用模板">
+                    <button type="button" class="chip" data-prompt="薇之雨产品平铺图：哑银外盒静置于浅色花纹台面，柔和侧光，浅景深，画面干净留白，高级护肤品质感，真实摄影风格">产品平铺</button>
+                    <button type="button" class="chip" data-prompt="竖版朋友圈海报：橄榄绿与米白配色，大面积留白，雨林光影作为背景虚化，上方预留标题文字区域，极简高级，商业海报风格">海报竖版</button>
+                    <button type="button" class="chip" data-prompt="直播贴片背景：9:16 竖屏，深邃雨林绿背景，柔和光斑与雾气，中部留出干净区域放人像与文字，高级不抢眼">贴片背景</button>
+                    <button type="button" class="chip" data-prompt="门店场景：干净明亮的美业护理操作台，白色台面与木质细节，自然采光，产品整齐陈列，真实空间摄影">门店场景</button>
+                    <button type="button" class="chip" data-prompt="人物氛围图：女性侧脸特写，皮肤通透自然，手持护肤产品靠近面部，柔和自然光，浅色背景，高级美妆广告质感">人物氛围</button>
+                </div>
+
+                <div class="field">
+                    <div class="field-head"><label>画面比例</label><span class="field-note">默认 1:1 · 2K</span></div>
+                    <div class="size-chips" id="sizeChips" role="group" aria-label="画面比例">
+                        <button type="button" class="size-chip" data-size="1:1" aria-pressed="true">
+                            <span class="ratio-box" style="--r:1/1" aria-hidden="true"></span>
+                            <span class="size-label">1:1 方图<span>2048×2048</span></span>
+                        </button>
+                        <button type="button" class="size-chip" data-size="3:4" aria-pressed="false">
+                            <span class="ratio-box" style="--r:3/4" aria-hidden="true"></span>
+                            <span class="size-label">3:4 竖版<span>1536×2048</span></span>
+                        </button>
+                        <button type="button" class="size-chip" data-size="4:3" aria-pressed="false">
+                            <span class="ratio-box" style="--r:4/3" aria-hidden="true"></span>
+                            <span class="size-label">4:3 横版<span>2048×1536</span></span>
+                        </button>
+                        <button type="button" class="size-chip" data-size="9:16" aria-pressed="false">
+                            <span class="ratio-box" style="--r:9/16" aria-hidden="true"></span>
+                            <span class="size-label">9:16 竖屏<span>1152×2048</span></span>
+                        </button>
+                        <button type="button" class="size-chip" data-size="16:9" aria-pressed="false">
+                            <span class="ratio-box" style="--r:16/9" aria-hidden="true"></span>
+                            <span class="size-label">16:9 横屏<span>2048×1152</span></span>
+                        </button>
+                    </div>
+                </div>
+
+                <div class="field">
+                    <div class="field-head"><label for="refInput">参考图</label><span class="field-note">可选 · 图生图</span></div>
+                    <div class="ref-row">
+                        <label class="ref-pick" for="refInput">
+                            <span class="ui-icon icon-image" aria-hidden="true"></span>
+                            <span id="refLabel">上传参考图</span>
+                        </label>
+                        <input type="file" id="refInput" accept="image/*" hidden>
+                        <button type="button" class="ref-clear" id="refClear" hidden>移除</button>
+                    </div>
+                    <div class="ref-preview" id="refPreview" hidden>
+                        <img id="refThumb" alt="参考图预览">
+                    </div>
+                </div>
+
+                <button type="button" class="generate-btn" id="generateBtn">
+                    <span class="ui-icon icon-sparkles" aria-hidden="true"></span>
+                    <span id="generateLabel">生成图片</span>
+                </button>
+                <p class="studio-hint">单次约 10–30 秒 · 结果自动保存在本机</p>
+            </section>
+
+            <section class="studio-stage-wrap" aria-label="生成结果">
+                <div class="stage" id="stage">
+                    <div class="stage-empty" id="stageEmpty">
+                        <span class="ui-icon icon-image stage-empty-icon" aria-hidden="true"></span>
+                        <p>写清楚画面，选择比例，就能出图</p>
+                        <small>默认 2K 出图，可用于详情页、朋友圈、直播间贴片</small>
+                    </div>
+                    <div class="stage-loading" id="stageLoading" hidden>
+                        <div class="loading-plate"></div>
+                        <div class="loading-meta">
+                            <span class="loading-dots"><i></i><i></i><i></i></span>
+                            <span id="loadingText">正在生成 2K 图…</span>
+                        </div>
+                    </div>
+                    <div class="stage-result" id="stageResult" hidden>
+                        <img id="resultImg" alt="生成结果">
+                        <div class="result-actions">
+                            <a class="result-btn" id="downloadBtn" download>下载原图</a>
+                            <button class="result-btn" type="button" id="asRefBtn">作为参考图</button>
+                            <button class="result-btn" type="button" id="againBtn">再生成一次</button>
+                        </div>
+                        <p class="result-prompt" id="resultPrompt"></p>
+                    </div>
+                    <div class="stage-error" id="stageError" hidden>
+                        <p id="errorText"></p>
+                        <button class="result-btn" type="button" id="errorRetry">重试</button>
+                    </div>
+                </div>
+
+                <div class="history-block">
+                    <div class="history-head">
+                        <span>最近生成</span>
+                        <button type="button" class="history-clear" id="historyClear" hidden>清空</button>
+                    </div>
+                    <div class="history-grid" id="historyGrid"></div>
+                </div>
+            </section>
+
+        </div>
+    </div>
+</main>
+
+<div class="lightbox" id="lightbox" hidden>
+    <img id="lightboxImg" alt="查看大图">
+    <button class="lightbox-close" type="button" id="lightboxClose" aria-label="关闭">
+        <span class="ui-icon icon-close" aria-hidden="true"></span>
+    </button>
+</div>
+
+<script src="/static/js/studio.js" defer></script>
+</body>
+</html>

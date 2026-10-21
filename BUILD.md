@@ -138,6 +138,18 @@ SSH 连接使用部署机器上的 `AIQISAO_SSH_HOST`、`AIQISAO_SSH_USER`、`AI
 
 当前生产网页与远程 App 入口使用同源 API，已验证正常。内置离线页面恢复联网后的请求属于跨源调用，仍需针对实际 WebView Origin 单独配置服务端 CORS 允许列表；本次未开放通配或 `null` Origin，不能将静态离线页面构建成功视为该跨源链路已通过。
 
+### 素材生成（生图）独立入口
+
+优化版 `optimized/` 新增独立页面 `/image`，入口在对话页侧边栏「素材生成」，不占用对话流。
+
+- 后端：`POST /api/image`（`optimized/server.js` → `optimized/api/image_gen.js`）
+- 模型：`hy-image-v3.5-preview`；默认 2K（2048×2048），服务端硬性封顶 2048×2048，**不开放 4K**
+- 密钥：只读服务端环境变量 `HUNYUAN_API_KEY`（`optimized/.env` 或 PM2 环境注入），前端永不接触
+- 上游返回的是 12 小时有效的鉴权临时地址，服务端下载后转存到 `public/static/gen/`，前端只引用本站地址；该目录按「160 张 / 24 小时」自动清理，且不入版本库
+- 防刷：每 IP 每分钟 5 次、每小时 30 次（内存计数）
+- 构建：`cd optimized && python build.py`（需 Pillow、brotli、npx esbuild）；启动：`npm start`
+- 发版务必修改 `optimized/public/sw.js` 的 `VERSION`，否则老用户会拿旧缓存
+
 ### 修改后端 API 地址
 
 编辑 `web_app/offline.html.TEMPLATE`，找到：

@@ -1,0 +1,15 @@
+{
+  "name": "aiqisao-optimized",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "薇之雨 · AI 七嫂（优化版）+ 素材生成独立入口",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "build": "python build.py"
+  },
+  "dependencies": {
+    "express": "^4.21.2"
+  }
+}

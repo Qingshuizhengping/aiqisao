@@ -71,10 +71,13 @@ def main():
     markdown_js = os.path.join(PUBLIC, "static", "js", "markdown.mjs")
     run(f'npx --yes esbuild "{os.path.join(SRC, "markdown.js")}" --bundle --minify --format=esm --target=es2019 --outfile="{markdown_js}"')
     field_js = minify(os.path.join(SRC, "lightfield.js"), os.path.join(PUBLIC, "static", "js", "lightfield.js"), "js")
+    studio_js = minify(os.path.join(SRC, "studio.js"), os.path.join(PUBLIC, "static", "js", "studio.js"), "js")
     css_out = minify(os.path.join(SRC, "styles.css"), os.path.join(ROOT, "build", "styles.min.css"), "css")
+    studio_css_out = minify(os.path.join(SRC, "image.css"), os.path.join(ROOT, "build", "studio.min.css"), "css")
     css = open(css_out, encoding="utf-8").read()
+    studio_css = open(studio_css_out, encoding="utf-8").read()
 
-    # 3. 内联
+    # 3. 内联（对话页 + 独立生图页共用同一份基础样式）
     html = open(os.path.join(SRC, "index.html"), encoding="utf-8").read()
     if "/*__STYLES__*/" not in html:
         raise SystemExit("index.html 里找不到 /*__STYLES__*/ 占位符")
@@ -83,8 +86,15 @@ def main():
     index_path = os.path.join(PUBLIC, "index.html")
     open(index_path, "w", encoding="utf-8", newline="\n").write(html)
 
+    studio_html = open(os.path.join(SRC, "image.html"), encoding="utf-8").read()
+    if "/*__STUDIO_STYLES__*/" not in studio_html:
+        raise SystemExit("image.html 里找不到 /*__STUDIO_STYLES__*/ 占位符")
+    studio_html = studio_html.replace("/*__STYLES__*/", css).replace("/*__STUDIO_STYLES__*/", studio_css)
+    studio_path = os.path.join(PUBLIC, "image.html")
+    open(studio_path, "w", encoding="utf-8", newline="\n").write(studio_html)
+
     # 4. 预压缩（只压会走网络的文本资源）
-    for path in [index_path, app_js, markdown_js, field_js,
+    for path in [index_path, studio_path, app_js, markdown_js, field_js, studio_js,
                  os.path.join(PUBLIC, "sw.js"),
                  os.path.join(PUBLIC, "manifest.json")]:
         precompress(path)
@@ -93,7 +103,7 @@ def main():
     print("\n产物体积")
     print("-" * 52)
     total_raw = total_gz = total_br = 0
-    for path in [index_path, app_js, field_js]:
+    for path in [index_path, studio_path, app_js, field_js, studio_js]:
         raw = os.path.getsize(path)
         gz = os.path.getsize(path + ".gz")
         br = os.path.getsize(path + ".br") if brotli else 0
