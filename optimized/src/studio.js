@@ -9,11 +9,13 @@
     var charCount = document.getElementById('charCount');
     var presetsEl = document.getElementById('presets');
     var sizeChips = document.getElementById('sizeChips');
+    var sizeNote = document.getElementById('sizeNote');
     var refInput = document.getElementById('refInput');
     var refLabel = document.getElementById('refLabel');
     var refClear = document.getElementById('refClear');
     var refPreview = document.getElementById('refPreview');
-    var refThumb = document.getElementById('refThumb');
+    var refCount = document.getElementById('refCount');
+    var refPick = document.querySelector('.ref-pick[for="refInput"]');
     var generateBtn = document.getElementById('generateBtn');
     var generateLabel = document.getElementById('generateLabel');
     var serviceStatus = document.getElementById('serviceStatus');
@@ -42,10 +44,14 @@
     var MAX_HISTORY = 36;
     var MAX_PROMPT = 4000;
     var REQUEST_TIMEOUT = 240000;
+    var MAX_REFERENCES = 20;
+    var MAX_REFERENCE_FILE_BYTES = 20 * 1024 * 1024;
+    var MAX_REFERENCE_CHARS = 14000000;
 
     var DEFAULT_SIZE = '1:1';
     var currentSize = DEFAULT_SIZE;
-    var referenceDataUrl = '';
+    var references = [];
+    var isReadingReferences = false;
     var history = [];
     var isBusy = false;
     var timerId = 0;
@@ -79,7 +85,7 @@
 
     function startTimer() {
         startedAt = Date.now();
-        var label = '正在生成 ' + currentSize + ' · 2K 图…';
+        var label = generationLabel();
         loadingText.textContent = label;
         stopTimer();
         timerId = setInterval(function () {
@@ -94,8 +100,27 @@
 
     function setBusy(busy) {
         isBusy = busy;
-        generateBtn.disabled = busy || !serviceReady;
-        generateLabel.textContent = busy ? '生成中…' : '生成图片';
+        syncControls();
+    }
+
+    function generationLabel() {
+        return currentSize === 'auto' ? '正在按描述自动确定尺寸…' : '正在生成 ' + currentSize + ' · 2K 图…';
+    }
+
+    function syncControls() {
+        var locked = isBusy || isReadingReferences;
+        generateBtn.disabled = locked || !serviceReady;
+        generateLabel.textContent = isBusy ? '生成中…' : isReadingReferences ? '正在读取图片…' : '生成图片';
+        refInput.disabled = locked || references.length >= MAX_REFERENCES;
+        if (refPick) refPick.setAttribute('aria-disabled', String(refInput.disabled));
+        refClear.disabled = locked;
+        asRefBtn.disabled = locked || references.length >= MAX_REFERENCES;
+        againBtn.disabled = locked;
+        errorRetry.disabled = locked;
+        promptEl.disabled = isReadingReferences;
+        refPreview.setAttribute('aria-busy', String(isReadingReferences));
+        document.querySelectorAll('#refPreview .ref-remove, #sizeChips .size-chip, #presets .chip').forEach(function (button) { button.disabled = locked; });
+        if (refCount) refCount.textContent = references.length + ' / ' + MAX_REFERENCES + ' 张' + (isReadingReferences ? ' · 正在读取…' : '');
     }
 
     function showError(message) {
@@ -112,7 +137,7 @@
 
     presetsEl.addEventListener('click', function (event) {
         var chip = event.target.closest('.chip');
-        if (!chip || isBusy) return;
+        if (!chip || isBusy || isReadingReferences) return;
         promptEl.value = chip.dataset.prompt || '';
         syncCharCount();
         promptEl.focus();
@@ -128,12 +153,13 @@
     /* ------------------------------ 尺寸 ------------------------------ */
     sizeChips.addEventListener('click', function (event) {
         var chip = event.target.closest('.size-chip');
-        if (!chip || isBusy) return;
+        if (!chip || isBusy || isReadingReferences) return;
         var chips = sizeChips.querySelectorAll('.size-chip');
         for (var i = 0; i < chips.length; i++) chips[i].setAttribute('aria-pressed', String(chips[i] === chip));
         currentSize = chip.dataset.size || DEFAULT_SIZE;
+        if (sizeNote) sizeNote.textContent = currentSize === 'auto' ? '自动 · 模型自适应' : currentSize + ' · 2K';
         if (stageLoading.hidden === false) return;
-        loadingText.textContent = '正在生成 ' + currentSize + ' · 2K 图…';
+        loadingText.textContent = generationLabel();
     });
 
     /* ------------------------------ 参考图 ------------------------------ */
@@ -148,14 +174,14 @@
 
     // 长边压到 1600、转 JPEG，控制上行体积（上游单图上限 20MB）
     function shrinkImage(dataUrl) {
-        return new Promise(function (resolve) {
+        return new Promise(function (resolve, reject) {
             var img = new Image();
             img.onload = function () {
                 var w = img.naturalWidth || 0;
                 var h = img.naturalHeight || 0;
-                if (!w || !h) return resolve(dataUrl);
+                if (!w || !h) return reject(new Error('参考图尺寸无效，请换一张图片'));
                 var scale = Math.min(1, 1600 / Math.max(w, h));
-                if (scale >= 1 && dataUrl.length < 1200000) return resolve(dataUrl);
+                if (scale >= 1 && dataUrl.length < 1200000 && /^data:image\/(?:png|jpe?g);base64,/i.test(dataUrl)) return resolve(dataUrl);
                 try {
                     var cw = Math.round(w * scale);
                     var chh = Math.round(h * scale);
@@ -163,42 +189,114 @@
                     canvas.width = cw;
                     canvas.height = chh;
                     var ctx = canvas.getContext('2d');
+                    if (!ctx) throw new Error('无法处理参考图');
                     ctx.fillStyle = '#ffffff';
                     ctx.fillRect(0, 0, cw, chh);
                     ctx.drawImage(img, 0, 0, cw, chh);
-                    resolve(canvas.toDataURL('image/jpeg', 0.86));
+                    var resized = canvas.toDataURL('image/jpeg', 0.86);
+                    if (!/^data:image\/jpeg;base64,/.test(resized)) throw new Error('参考图压缩失败');
+                    resolve(resized);
                 } catch (e) {
-                    resolve(dataUrl);
+                    reject(new Error('参考图处理失败，请换一张 PNG / JPG / WebP 图片'));
                 }
             };
-            img.onerror = function () { resolve(dataUrl); };
+            img.onerror = function () { reject(new Error('参考图无法读取，请使用有效的 PNG / JPG / WebP 图片')); };
             img.src = dataUrl;
         });
     }
 
-    function setReference(dataUrl) {
-        referenceDataUrl = dataUrl || '';
-        var has = Boolean(referenceDataUrl);
+    function renderReferences() {
+        var has = references.length > 0;
+        var fragment = document.createDocumentFragment();
+        references.forEach(function (reference, index) {
+            var figure = document.createElement('figure');
+            figure.className = 'ref-preview-item';
+            figure.setAttribute('role', 'listitem');
+            var image = document.createElement('img');
+            image.src = reference.dataUrl;
+            image.alt = '参考图 ' + (index + 1);
+            image.title = reference.name || image.alt;
+            image.loading = 'lazy';
+            image.decoding = 'async';
+            var remove = document.createElement('button');
+            remove.type = 'button';
+            remove.className = 'ref-remove';
+            remove.dataset.referenceIndex = String(index);
+            remove.setAttribute('aria-label', '移除参考图 ' + (index + 1));
+            remove.textContent = '×';
+            var caption = document.createElement('figcaption');
+            caption.textContent = '参考图 ' + (index + 1);
+            figure.append(image, remove, caption);
+            fragment.appendChild(figure);
+        });
+        refPreview.replaceChildren(fragment);
         refPreview.hidden = !has;
         refClear.hidden = !has;
-        refLabel.textContent = has ? '已选参考图' : '上传参考图';
-        if (has) refThumb.src = referenceDataUrl;
-        else refThumb.removeAttribute('src');
+        refLabel.textContent = has ? '继续添加参考图' : '上传参考图';
+        syncControls();
+    }
+
+    async function appendReferences(items, prepare) {
+        if (isBusy || isReadingReferences || !items.length) return false;
+        if (references.length + items.length > MAX_REFERENCES) {
+            showError('最多添加 ' + MAX_REFERENCES + ' 张参考图，请先移除一些图片');
+            return false;
+        }
+        isReadingReferences = true;
+        syncControls();
+        var additions = [];
+        var totalChars = references.reduce(function (total, reference) { return total + reference.dataUrl.length; }, 0);
+        try {
+            for (var index = 0; index < items.length; index++) {
+                var reference = await prepare(items[index]);
+                if (!reference || !/^data:image\/(?:png|jpe?g|webp);base64,/i.test(reference.dataUrl)) throw new Error('参考图格式不支持');
+                totalChars += reference.dataUrl.length;
+                if (totalChars > MAX_REFERENCE_CHARS) throw new Error('参考图总大小过大，请减少图片或换成更小的图片');
+                additions.push(reference);
+            }
+            references = references.concat(additions);
+            return true;
+        } catch (error) {
+            showError(error.message || '参考图读取失败，换一张试试');
+            return false;
+        } finally {
+            isReadingReferences = false;
+            renderReferences();
+        }
     }
 
     refInput.addEventListener('change', async function () {
-        var file = refInput.files && refInput.files[0];
-        if (!file) return;
+        var files = Array.from(refInput.files || []);
+        if (isBusy || isReadingReferences || !files.length) { refInput.value = ''; return; }
         try {
-            var raw = await readFileAsDataUrl(file);
-            setReference(await shrinkImage(raw));
-        } catch (e) {
-            showError('参考图读取失败，换一张试试');
+            files.forEach(function (file) {
+                if (!/^image\/(?:png|jpe?g|webp)$/i.test(file.type)) throw new Error('参考图仅支持 PNG / JPG / WebP 图片');
+                if (!file.size || file.size > MAX_REFERENCE_FILE_BYTES) throw new Error('单张参考图不能超过 20MB，请换成更小的图片');
+            });
+            await appendReferences(files, async function (file) {
+                return { dataUrl: await shrinkImage(await readFileAsDataUrl(file)), name: file.name };
+            });
+        } catch (error) {
+            showError(error.message || '参考图读取失败，换一张试试');
+        } finally {
+            refInput.value = '';
         }
-        refInput.value = '';
     });
 
-    refClear.addEventListener('click', function () { setReference(''); });
+    refClear.addEventListener('click', function () {
+        if (isBusy || isReadingReferences) return;
+        references = [];
+        renderReferences();
+    });
+
+    refPreview.addEventListener('click', function (event) {
+        var button = event.target.closest('button[data-reference-index]');
+        if (!button || !refPreview.contains(button) || isBusy || isReadingReferences) return;
+        var index = Number(button.dataset.referenceIndex);
+        if (!Number.isInteger(index) || index < 0 || index >= references.length) return;
+        references.splice(index, 1);
+        renderReferences();
+    });
 
     /* ------------------------------ 历史 ------------------------------ */
     function loadHistory() {
@@ -303,7 +401,7 @@
     }
 
     async function generate() {
-        if (isBusy) return;
+        if (isBusy || isReadingReferences) return;
         if (!serviceReady) {
             showError('生图服务尚未启用，请联系管理员配置。');
             return;
@@ -328,7 +426,7 @@
             var data = await callApi({
                 prompt: prompt,
                 size: currentSize,
-                referenceImage: referenceDataUrl || undefined
+                referenceImages: references.length ? references.map(function (reference) { return reference.dataUrl; }) : undefined
             });
             showResult(data, prompt);
         } catch (e) {
@@ -357,24 +455,21 @@
     // 把结果当参考图，走图生图继续改
     asRefBtn.addEventListener('click', async function () {
         var url = resultImg.getAttribute('src');
-        if (!url) return;
-        asRefBtn.disabled = true;
-        try {
-            var resp = await fetch(url);
+        if (!url || isBusy || isReadingReferences) return;
+        var added = await appendReferences([url], async function (source) {
+            var resp = await fetch(source);
+            if (!resp.ok) throw new Error('这张图读取失败，可先下载再手动上传');
             var blob = await resp.blob();
+            if (!blob.size || blob.size > MAX_REFERENCE_FILE_BYTES) throw new Error('这张图片超过 20MB，请下载并缩小后再上传');
             var dataUrl = await new Promise(function (resolve, reject) {
                 var reader = new FileReader();
                 reader.onload = function () { resolve(String(reader.result || '')); };
                 reader.onerror = reject;
                 reader.readAsDataURL(blob);
             });
-            setReference(await shrinkImage(dataUrl));
-            promptEl.focus();
-        } catch (e) {
-            showError('这张图读取失败，可先下载再手动上传');
-        } finally {
-            asRefBtn.disabled = false;
-        }
+            return { dataUrl: await shrinkImage(dataUrl), name: '生成结果' };
+        });
+        if (added) promptEl.focus();
     });
 
     /* ------------------------------ 启动 ------------------------------ */
@@ -384,6 +479,8 @@
         loadHistory();
         renderHistory();
         setStage('empty');
+        if (sizeNote) sizeNote.textContent = '默认 1:1 · 2K';
+        renderReferences();
 
         fetch('/api/health', { signal: AbortSignal.timeout(8000) }).then(function (response) {
             if (!response.ok) throw new Error('Service unavailable');

@@ -140,6 +140,10 @@ SSH 连接使用部署机器上的 `AIQISAO_SSH_HOST`、`AIQISAO_SSH_USER`、`AI
 
 新增 `/image` 素材入口由 `/api/image` 提供服务；`/api/health` 的 `imageReady` 只表示服务端是否配置密钥，不代表额度或真实生成已验证。`HUNYUAN_API_KEY`（或 `TOKENHUB_API_KEY`）仅放服务器环境或私有 `.env`，不要写入前端、仓库、日志。未配置时页面明确提示未启用，不调用收费接口。生成记录在本机；每次生成后，服务器按 24 小时时效和 160 张数量规则清理图片，请及时下载。
 
+素材生成支持最多 20 张参考图，可多选、分批追加、逐张移除或清空。参考图只在当前页面内存中保存，按预览编号顺序提交 `referenceImages`；服务端保留旧 `referenceImage` 单图兼容。单张源文件限制 20MB，浏览器会压缩，所有参考图数据合计限制 14,000,000 字符，超限在调用模型前拒绝；HTTP 生图请求仍为 16MB，不影响聊天 1MB 限制。
+
+尺寸保留五种固定 2K 档和默认 `1:1`，新增 `auto` 自动尺寸。自动模式不向上游传 `size` 或 `generate_max_pixels`，由模型按描述确定尺寸、使用默认档位（官方当前为 1.5K）；只传面积参数会默认方图，因此不把它作为“自动比例”。协议依据：[腾讯 Hy 生图调用指南](https://cloud.tencent.com/document/product/1823/135745)。
+
 部署保留 `/opt/ai-qisao/api/_config.js`、`.env`、TLS 和既有生成图/下载，不把仓库默认聊天模型覆盖到生产。新生图模块独立位于 `api/_env.js`、`api/image_config.js`、`api/image_gen.js`。`.env` 在读取生图模型配置前加载，已有进程环境变量优先。Nginx 的 `/api/image` 需允许 `client_max_body_size 16m` 和至少 240 秒代理读超时；聊天接口仍保持 1MB 请求体限制。
 
 ### 素材生成（生图）独立入口

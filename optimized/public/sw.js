@@ -8,12 +8,12 @@
  *
  * 发版时把 VERSION 改掉即可强制刷新缓存。
  */
-var VERSION = 'qisao-v20261021-2';
+var VERSION = 'qisao-v20261021-3';
 
 var PRECACHE = [
     '/',
     '/static/js/app.js',
-    '/static/js/app.js?v=20261021-2',
+    '/static/js/app.js?v=20261021-3',
     '/static/js/markdown.mjs',
     '/static/js/lightfield.js',
     '/static/img/avatar-192.webp',

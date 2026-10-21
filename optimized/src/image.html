@@ -76,8 +76,8 @@
                 </div>
 
                 <div class="field">
-                    <div class="field-head"><label>画面比例</label><span class="field-note">默认 1:1 · 2K</span></div>
-                    <div class="size-chips" id="sizeChips" role="group" aria-label="画面比例">
+                    <div class="field-head"><label>画面尺寸</label><span class="field-note" id="sizeNote">默认 1:1 · 2K</span></div>
+                    <div class="size-chips" id="sizeChips" role="group" aria-label="画面尺寸">
                         <button type="button" class="size-chip" data-size="1:1" aria-pressed="true">
                             <span class="ratio-box" style="--r:1/1" aria-hidden="true"></span>
                             <span class="size-label">1:1 方图<span>2048×2048</span></span>
@@ -98,22 +98,25 @@
                             <span class="ratio-box" style="--r:16/9" aria-hidden="true"></span>
                             <span class="size-label">16:9 横屏<span>2048×1152</span></span>
                         </button>
+                        <button type="button" class="size-chip" data-size="auto" aria-pressed="false">
+                            <span class="ui-icon icon-sparkles ratio-auto" aria-hidden="true"></span>
+                            <span class="size-label">自动<span>模型自适应</span></span>
+                        </button>
                     </div>
                 </div>
 
                 <div class="field">
-                    <div class="field-head"><label for="refInput">参考图</label><span class="field-note">可选 · 图生图</span></div>
+                    <div class="field-head"><label for="refInput">参考图</label><span class="field-note" id="refCount" role="status" aria-live="polite">0 / 20 张</span></div>
                     <div class="ref-row">
                         <label class="ref-pick" for="refInput">
                             <span class="ui-icon icon-image" aria-hidden="true"></span>
                             <span id="refLabel">上传参考图</span>
                         </label>
-                        <input type="file" id="refInput" accept="image/*" hidden>
-                        <button type="button" class="ref-clear" id="refClear" hidden>移除</button>
+                        <input type="file" id="refInput" accept="image/png,image/jpeg,image/webp" multiple hidden>
+                        <button type="button" class="ref-clear" id="refClear" hidden>清空全部</button>
                     </div>
-                    <div class="ref-preview" id="refPreview" hidden>
-                        <img id="refThumb" alt="参考图预览">
-                    </div>
+                    <p class="reference-hint">可多选或分批添加，按编号顺序参考；上传时自动压缩。</p>
+                    <div class="ref-preview" id="refPreview" role="list" aria-label="已选参考图" hidden></div>
                 </div>
 
                 <button type="button" class="generate-btn" id="generateBtn">
@@ -129,7 +132,7 @@
                     <div class="stage-empty" id="stageEmpty">
                         <span class="ui-icon icon-image stage-empty-icon" aria-hidden="true"></span>
                         <p>写清楚画面，选择比例，就能出图</p>
-                        <small>默认 2K 出图，可用于详情页、朋友圈、直播间贴片</small>
+                        <small>固定尺寸 2K 出图，也可选择自动尺寸并搭配多张参考图</small>
                     </div>
                     <div class="stage-loading" id="stageLoading" hidden>
                         <div class="loading-plate"></div>
@@ -173,6 +176,6 @@
     </button>
 </div>
 
-<script src="/static/js/studio.js?v=20261021-2" defer></script>
+<script src="/static/js/studio.js?v=20261021-3" defer></script>
 </body>
 </html>

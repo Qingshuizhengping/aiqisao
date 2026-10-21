@@ -25,6 +25,7 @@ const MAX_AREA = 2048 * 2048;
 // 默认档位兜底：前端没传就按 2K
 function resolveSize(sizeKey) {
     const key = String(sizeKey || '').trim() || DEFAULT_SIZE;
+    if (key === 'auto') return null;
     if (!Object.prototype.hasOwnProperty.call(SIZE_PRESETS, key)) {
         throw httpError(400, '不支持的尺寸选项');
     }
@@ -40,6 +41,7 @@ function resolveSize(sizeKey) {
 const MAX_FILES = 160;
 const MAX_AGE_MS = 24 * 3600 * 1000;
 const MAX_REF_CHARS = 14_000_000; // 约 10MB 图片的 base64
+const MAX_REFERENCE_IMAGES = 20;
 const MAX_IMAGE_BYTES = 20 * 1024 * 1024;
 const MAX_JSON_BYTES = 32 * 1024 * 1024;
 
@@ -64,6 +66,26 @@ function sanitizeReference(value) {
         return str;
     }
     throw httpError(400, '参考图格式不支持，请上传 PNG / JPG / WebP 图片');
+}
+
+function sanitizeReferences(payload) {
+    const multiple = payload && payload.referenceImages;
+    let values;
+    if (multiple !== undefined) {
+        if (!Array.isArray(multiple)) throw httpError(400, '参考图必须为图片数组');
+        values = multiple;
+    } else {
+        const legacy = payload && payload.referenceImage;
+        values = legacy ? [legacy] : [];
+    }
+    if (values.length > MAX_REFERENCE_IMAGES) throw httpError(400, '最多支持 20 张参考图');
+    let characters = 0;
+    for (const value of values) {
+        if (typeof value !== 'string' || !value.trim()) throw httpError(400, '参考图内容无效');
+        characters += value.trim().length;
+        if (characters > MAX_REF_CHARS) throw httpError(413, '参考图总大小过大，请减少图片或使用更小的图片');
+    }
+    return values.map(sanitizeReference);
 }
 
 function sniffExt(buf) {
@@ -222,7 +244,7 @@ function upstreamFailure(status, body) {
 }
 
 /**
- * @param {{ prompt: string, size?: string, referenceImage?: string, session?: string }} payload
+ * @param {{ prompt: string, size?: string, referenceImage?: string, referenceImages?: string[], session?: string }} payload
  * @returns {Promise<{ url: string, revisedPrompt: string, tokens: number }>}
  */
 export async function generateImage(payload, apiKey) {
@@ -235,13 +257,14 @@ export async function generateImage(payload, apiKey) {
     const sizeKey = String((payload && payload.size) || DEFAULT_SIZE);
     const size = resolveSize(sizeKey);
 
-    const referenceImage = sanitizeReference(payload && payload.referenceImage);
+    const referenceImages = sanitizeReferences(payload);
     const session = String((payload && payload.session) || '').replace(/[^A-Za-z0-9_-]/g, '').slice(0, 64);
 
     const content = [{ type: 'text', text: prompt }];
-    if (referenceImage) content.push({ type: 'image_url', image_url: { url: referenceImage } });
+    for (const referenceImage of referenceImages) content.push({ type: 'image_url', image_url: { url: referenceImage } });
 
-    const body = { model: IMAGE_MODEL, messages: [{ role: 'user', content }], size };
+    const body = { model: IMAGE_MODEL, messages: [{ role: 'user', content }] };
+    if (size) body.size = size;
     if (session) body.session = session;
 
     let resp;
