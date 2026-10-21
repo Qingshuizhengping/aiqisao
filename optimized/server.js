@@ -19,13 +19,13 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC_DIR = path.join(__dirname, 'public');
 const app = express();
 const PORT = process.env.PORT || 3000;
-const CLIENT_VERSION = 'qisao-v20261021-4';
+const CLIENT_VERSION = 'qisao-v20261021-5';
 const MODEL_REQUEST_OPTIONS = MODEL === 'zai-org/GLM-5.3-Flash' ? { reasoning_effort: 'low' } : {};
 
 function renderClientAnswer(content, clientVersion) {
     const html = renderMarkdown(content);
     if (clientVersion === CLIENT_VERSION) return html;
-    return html + '<p class="client-update"><a href="/?v=20261021-4">启用新版实时排版（请先保存草稿）</a><br><small>对话记录保留，无需重装。</small></p>';
+    return html + '<p class="client-update"><a href="/?v=20261021-5">启用新版实时排版（请先保存草稿）</a><br><small>对话记录保留，无需重装。</small></p>';
 }
 
 app.disable('x-powered-by');

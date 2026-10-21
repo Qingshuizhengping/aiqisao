@@ -53,7 +53,7 @@
     var MAX_HISTORY = 36;
     var MAX_PROMPT = 4000;
     var REQUEST_TIMEOUT = 240000;
-    var PREPARE_TIMEOUT = 20000;
+    var PREPARE_TIMEOUT = 30000;
     var MAX_REFERENCES = 20;
     var MAX_REFERENCE_FILE_BYTES = 20 * 1024 * 1024;
     var MAX_REFERENCE_CHARS = 14000000;
@@ -64,13 +64,11 @@
     var isReadingReferences = false;
     var history = [];
     var isBusy = false;
-    var timerId = 0;
-    var startedAt = 0;
     var lastPrompt = '';
     var serviceReady = true;
     var healthPending = true;
     var optimizationReady = false;
-    var optimizationAvailableText = '智能优化不可用，将按原始描述生成。';
+    var optimizationAvailableText = '视觉优化不可用，将按原始描述生成。';
     var activePhase = 'generate';
     var pendingOriginalSnapshot = null;
     var uncertainGeneration = false;
@@ -100,19 +98,10 @@
         stageClarification.hidden = name !== 'clarification';
     }
 
-    function startTimer() {
-        startedAt = Date.now();
-        var label = generationLabel();
-        loadingText.textContent = label;
-        stopTimer();
-        timerId = setInterval(function () {
-            var sec = Math.round((Date.now() - startedAt) / 1000);
-            loadingText.textContent = sec < 6 ? label : label.replace('…', '… 已用 ' + sec + ' 秒');
-        }, 1000);
-    }
-
-    function stopTimer() {
-        if (timerId) { clearInterval(timerId); timerId = 0; }
+    function setLoadingPhase(phase) {
+        activePhase = phase;
+        loadingText.textContent = phase === 'prepare' ? '正在优化构图、光线与色彩…' : '正在生成并保存…';
+        syncControls();
     }
 
     function setBusy(busy) {
@@ -120,14 +109,10 @@
         syncControls();
     }
 
-    function generationLabel() {
-        return activePhase === 'prepare' ? '正在理解并优化需求…' : '正在生成并保存…';
-    }
-
     function syncControls() {
         var locked = isBusy || isReadingReferences;
         generateBtn.disabled = locked || healthPending || !serviceReady;
-        generateLabel.textContent = isBusy ? activePhase === 'prepare' ? '正在优化需求…' : '生成中…' : isReadingReferences ? '正在读取图片…' : healthPending ? '正在检查服务…' : '生成图片';
+        generateLabel.textContent = isBusy ? activePhase === 'prepare' ? '正在优化视觉…' : '生成中…' : isReadingReferences ? '正在读取图片…' : healthPending ? '正在检查服务…' : optimizationReady && optimizeToggle.checked ? '视觉优化并生成' : '生成图片';
         refInput.disabled = locked || references.length >= MAX_REFERENCES;
         if (refPick) refPick.setAttribute('aria-disabled', String(refInput.disabled));
         refClear.disabled = locked;
@@ -141,7 +126,7 @@
         refPreview.setAttribute('aria-busy', String(isReadingReferences));
         document.querySelectorAll('#refPreview .ref-remove, #sizeChips .size-chip, #presets .chip').forEach(function (button) { button.disabled = locked; });
         if (refCount) refCount.textContent = references.length + ' / ' + MAX_REFERENCES + ' 张' + (isReadingReferences ? ' · 正在读取…' : '');
-        optimizeStatus.textContent = optimizationReady ? optimizeToggle.checked ? '仅整理文字需求，不上传参考图进行理解。' : '已关闭，将直接使用你的原始描述。' : optimizationAvailableText;
+        optimizeStatus.textContent = optimizationReady ? optimizeToggle.checked ? '保留原意，完善构图、光线、色彩与质感；仅理解文字，不额外上传参考图。' : '已关闭视觉优化，将直接使用你的原始描述。' : optimizationAvailableText;
     }
 
     function showError(message) {
@@ -198,8 +183,6 @@
         for (var i = 0; i < chips.length; i++) chips[i].setAttribute('aria-pressed', String(chips[i] === chip));
         currentSize = chip.dataset.size || DEFAULT_SIZE;
         if (sizeNote) sizeNote.textContent = currentSize === 'auto' ? '自动 · 模型自适应' : currentSize + ' · 2K';
-        if (stageLoading.hidden === false) return;
-        loadingText.textContent = generationLabel();
     });
 
     /* ------------------------------ 参考图 ------------------------------ */
@@ -474,7 +457,7 @@
             return data;
         } catch (error) {
             if (error && error.httpStatus) throw error;
-            var transportError = new Error(error && error.name === 'AbortError' ? path === '/api/image/prepare' ? '需求优化等待超时，尚未发起生图。' : '生成等待超时，结果尚未确认。服务可能仍在处理，请勿立即重复提交。' : path === '/api/image/prepare' ? '需求优化连接中断，尚未发起生图。' : '生图连接中断，结果尚未确认。服务可能仍在处理，请勿立即重复提交。');
+            var transportError = new Error(error && error.name === 'AbortError' ? path === '/api/image/prepare' ? '视觉优化等待超时，尚未发起生图。' : '生成等待超时，结果尚未确认。服务可能仍在处理，请勿立即重复提交。' : path === '/api/image/prepare' ? '视觉优化连接中断，尚未发起生图。' : '生图连接中断，结果尚未确认。服务可能仍在处理，请勿立即重复提交。');
             transportError.transport = true;
             throw transportError;
         } finally {
@@ -517,9 +500,7 @@
         };
         if (snapshot.referenceImages.length) payload.referenceImages = snapshot.referenceImages.slice();
         if (prepared) payload.optimizationToken = prepared.optimizationToken;
-        activePhase = 'generate';
-        syncControls();
-        startTimer();
+        setLoadingPhase('generate');
         try {
             var data = await postJson('/api/image', payload, REQUEST_TIMEOUT);
             if (data.status !== 'ok' || typeof data.url !== 'string' || !data.url) {
@@ -535,9 +516,7 @@
     }
 
     async function prepareImage(snapshot) {
-        activePhase = 'prepare';
-        syncControls();
-        startTimer();
+        setLoadingPhase('prepare');
         var hashes = await referenceHashes(snapshot);
         if (!snapshotMatches(snapshot)) throw new Error('输入已变化，本次准备已取消，请重新生成。');
         var prepared;
@@ -561,7 +540,7 @@
         }
         if (!snapshotMatches(snapshot)) throw new Error('输入已变化，本次准备已取消，请重新生成。');
         if (prepared.status === 'needs_clarification') {
-            if (typeof prepared.question !== 'string' || !prepared.question.trim()) throw new Error('智能优化未返回有效的补充问题，请修改描述后重新提交。');
+            if (typeof prepared.question !== 'string' || !prepared.question.trim()) throw new Error('视觉优化未返回有效的补充问题，请修改描述后重新提交。');
             clarificationQuestion.textContent = prepared.question;
             setStage('clarification');
             return null;
@@ -596,7 +575,7 @@
         invalidatePreparedInput();
         var snapshot = captureSnapshot(prompt);
         lastPrompt = prompt;
-        activePhase = snapshot.optimizationEnabled ? 'prepare' : 'generate';
+        setLoadingPhase(snapshot.optimizationEnabled ? 'prepare' : 'generate');
         setBusy(true);
         setStage('loading');
 
@@ -607,7 +586,6 @@
         } catch (e) {
             showError(e && e.message ? e.message : '生成失败，请稍后重试');
         } finally {
-            stopTimer();
             setBusy(false);
         }
     }
@@ -633,7 +611,7 @@
         }
         pendingOriginalSnapshot = null;
         useOriginalBtn.hidden = true;
-        activePhase = 'generate';
+        setLoadingPhase('generate');
         setBusy(true);
         setStage('loading');
         try {
@@ -641,7 +619,6 @@
         } catch (error) {
             showError(error.message || '生成失败，请稍后重试');
         } finally {
-            stopTimer();
             setBusy(false);
         }
     });
@@ -688,8 +665,8 @@
             var modeIsText = data.promptOptimizationMode === undefined || data.promptOptimizationMode === 'text';
             var secureFeatures = !!(window.crypto && window.crypto.subtle && window.crypto.getRandomValues && window.TextEncoder);
             optimizationReady = data.promptOptimizationReady === true && modeIsText && secureFeatures;
-            if (data.promptOptimizationReady === true && !modeIsText) optimizationAvailableText = '当前优化模式暂不支持，将按原始描述生成。';
-            else if (data.promptOptimizationReady === true && !secureFeatures) optimizationAvailableText = '智能优化需要 HTTPS 安全连接及新版浏览器；当前可直接使用原词生成。';
+            if (data.promptOptimizationReady === true && !modeIsText) optimizationAvailableText = '当前视觉优化模式暂不支持，将按原始描述生成。';
+            else if (data.promptOptimizationReady === true && !secureFeatures) optimizationAvailableText = '视觉优化需要 HTTPS 安全连接及新版浏览器；当前可直接使用原词生成。';
             optimizeToggle.checked = optimizationReady;
             if (typeof data.imageReady === 'boolean') serviceReady = data.imageReady;
             healthPending = false;

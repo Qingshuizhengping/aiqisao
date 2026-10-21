@@ -69,11 +69,11 @@
 
                 <div class="optimization-control">
                     <label class="optimization-switch" for="optimizeToggle">
-                        <span class="optimization-copy"><strong>智能优化描述</strong><small>先理解需求，保留主体与关键要求</small></span>
+                        <span class="optimization-copy"><strong>视觉优化</strong><small>优化构图、光线、色彩与质感，保留原意</small></span>
                         <input type="checkbox" id="optimizeToggle" role="switch" aria-describedby="optimizeStatus" disabled>
                         <span class="switch-track" aria-hidden="true"></span>
                     </label>
-                    <p id="optimizeStatus" role="status" aria-live="polite">正在检查智能优化服务…</p>
+                    <p id="optimizeStatus" role="status" aria-live="polite">正在检查视觉优化服务…</p>
                 </div>
 
                 <div class="presets" id="presets" aria-label="常用模板">
@@ -133,7 +133,7 @@
                     <span id="generateLabel">生成图片</span>
                 </button>
                 <p class="studio-hint" id="serviceStatus" role="status" hidden></p>
-                <p class="studio-hint">生成耗时随排队变化 · 记录保存在此设备，服务器图片会按时效和数量清理，请及时下载</p>
+                <p class="studio-hint">记录保存在此设备，服务器图片会按时效和数量清理，请及时下载</p>
             </section>
 
             <section class="studio-stage-wrap" aria-label="生成结果">
@@ -147,7 +147,7 @@
                         <div class="loading-plate"></div>
                         <div class="loading-meta">
                             <span class="loading-dots"><i></i><i></i><i></i></span>
-                            <span id="loadingText">正在生成 2K 图…</span>
+                            <span id="loadingText">正在生成并保存…</span>
                         </div>
                     </div>
                     <div class="stage-result" id="stageResult" hidden>
@@ -176,10 +176,10 @@
                 </div>
 
                 <details class="optimization-details" id="optimizationDetails" hidden>
-                    <summary>查看本次描述优化</summary>
+                    <summary>查看本次视觉优化</summary>
                     <div class="optimization-text"><h2>你的原始描述</h2><p id="originalPromptDisplay"></p></div>
-                    <div class="optimization-text"><h2>用于生成的优化描述</h2><p id="optimizedPromptDisplay"></p></div>
-                    <p class="optimization-note">智能优化仅整理文字需求；生图模型如有额外改写，会单独显示在结果下方。</p>
+                    <div class="optimization-text"><h2>用于生成的视觉描述</h2><p id="optimizedPromptDisplay"></p></div>
+                    <p class="optimization-note">视觉优化基于文字描述完善构图、光线、色彩与质感，并保留原意；生图模型如有额外改写，会单独显示在结果下方。</p>
                 </details>
 
                 <div class="history-block">
@@ -202,6 +202,6 @@
     </button>
 </div>
 
-<script src="/static/js/studio.js?v=20261021-4" defer></script>
+<script src="/static/js/studio.js?v=20261021-5" defer></script>
 </body>
 </html>
