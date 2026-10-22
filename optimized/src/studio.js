@@ -1,3 +1,9 @@
+import { createStudioJobStore } from './studio-job-store.js';
+import { createStudioJobController } from './studio-job-controller.js';
+import { createReferenceCollection, createReferenceProcessor, MAX_REFERENCES } from './studio-reference-images.js';
+import { createStudioHistoryStore } from './studio-history-store.js';
+import { createStudioLegacyClient } from './studio-legacy-client.js';
+
 /**
  * 薇之雨 · 素材生成（独立入口 /image）
  * 只依赖主站的 CSS 令牌，不碰对话页的任何逻辑。
@@ -51,18 +57,25 @@
     var themeToggle = document.getElementById('themeToggle');
 
     var HISTORY_KEY = 'qisao_studio_history';
-    var PENDING_JOB_KEY = 'qisao_studio_pending_job';
     var MAX_HISTORY = 36;
     var MAX_PROMPT = 4000;
-    var REQUEST_TIMEOUT = 240000;
-    var MAX_REFERENCES = 20;
-    var MAX_REFERENCE_FILE_BYTES = 20 * 1024 * 1024;
-    var MAX_REFERENCE_CHARS = 14000000;
 
     var DEFAULT_SIZE = '1:1';
     var currentSize = DEFAULT_SIZE;
-    var references = [];
-    var isReadingReferences = false;
+    var referenceCollection = createReferenceCollection();
+    var referenceProcessor = createReferenceProcessor();
+    var historyStore = createStudioHistoryStore({
+        key: HISTORY_KEY, maxEntries: MAX_HISTORY,
+        storage: {
+            getItem: function (key) { return localStorage.getItem(key); },
+            setItem: function (key, value) { localStorage.setItem(key, value); }
+        }
+    });
+    var legacyClient = createStudioLegacyClient({ crypto: window.crypto, newRequestId: newRequestId });
+    var historyNotice = null;
+    var legacyActive = false;
+    var deferredJobState = null;
+    var unsavedLegacyResult = false;
     var history = [];
     var isBusy = false;
     var lastPrompt = '';
@@ -74,11 +87,14 @@
     var pendingOriginalSnapshot = null;
     var uncertainGeneration = false;
     var jobsReady = false;
-    var pendingJob = null;
-    var jobSnapshot = null;
-    var jobPolling = false;
-    var jobPollTimer = null;
-    var pendingNeedsUpload = false;
+    var jobSnapshots = new Map();
+    var jobController = null;
+    var jobState = { record: null, pending: [], outcome: null, network: 'idle', business: 'idle', issue: null };
+    var renderedJobId = null;
+    var renderedOutcomeSequence = 0;
+    var recoveryLabel = null;
+    var recoverySelect = null;
+    var recoveryOptionsKey = '';
     var requiredReferenceUploadCount = 0;
 
     /* ------------------------------ 主题 ------------------------------ */
@@ -117,31 +133,35 @@
         syncControls();
     }
 
+    function isWorking() {
+        return isBusy || !!jobState.record;
+    }
+
     function syncControls() {
-        var locked = isBusy || isReadingReferences || !!pendingJob;
+        var locked = isWorking() || referenceCollection.reading;
         generateBtn.disabled = locked || healthPending || !serviceReady;
-        generateLabel.textContent = isBusy ? activePhase === 'prepare' ? '正在优化视觉…' : '生成中…' : isReadingReferences ? '正在读取图片…' : healthPending ? '正在检查服务…' : optimizationReady && optimizeToggle.checked ? '视觉优化并生成' : '生成图片';
-        refInput.disabled = locked || references.length >= MAX_REFERENCES;
+        generateLabel.textContent = isWorking() ? activePhase === 'prepare' ? '正在优化视觉…' : '生成中…' : referenceCollection.reading ? '正在读取图片…' : healthPending ? '正在检查服务…' : optimizationReady && optimizeToggle.checked ? '视觉优化并生成' : '生成图片';
+        refInput.disabled = locked || referenceCollection.count >= MAX_REFERENCES;
         if (refPick) refPick.setAttribute('aria-disabled', String(refInput.disabled));
         refClear.disabled = locked;
-        asRefBtn.disabled = locked || references.length >= MAX_REFERENCES;
+        asRefBtn.disabled = locked || referenceCollection.count >= MAX_REFERENCES;
         againBtn.disabled = locked;
-        errorRetry.disabled = pendingJob ? !pendingNeedsUpload || jobPolling : locked;
+        errorRetry.disabled = jobState.record ? jobState.issue?.code !== 'UPLOAD_REQUIRED' || jobState.network !== 'idle' : locked;
         useOriginalBtn.disabled = locked || !pendingOriginalSnapshot || !serviceReady;
         clarificationEdit.disabled = locked;
         promptEl.disabled = locked;
         optimizeToggle.disabled = locked || !optimizationReady;
-        refPreview.setAttribute('aria-busy', String(isReadingReferences));
+        refPreview.setAttribute('aria-busy', String(referenceCollection.reading));
         document.querySelectorAll('#refPreview .ref-remove, #sizeChips .size-chip, #presets .chip').forEach(function (button) { button.disabled = locked; });
-        if (refCount) refCount.textContent = references.length + ' / ' + MAX_REFERENCES + ' 张' + (isReadingReferences ? ' · 正在读取…' : pendingJob && !jobSnapshot && pendingJob.referenceCount ? ' · 后台任务已上传 ' + pendingJob.referenceCount + ' 张' : '');
-        if (clarificationHint) clarificationHint.textContent = requiredReferenceUploadCount ? '此任务原有 ' + requiredReferenceUploadCount + ' 张参考图，请重新上传至少一张后再提交。尺寸已保留。' : references.length ? '参考图和尺寸已保留，请在上方描述中补充后重新生成。' : '尺寸已保留，请在上方描述中补充后重新生成。';
+        if (refCount) refCount.textContent = referenceCollection.count + ' / ' + MAX_REFERENCES + ' 张' + (referenceCollection.reading ? ' · 正在读取…' : jobState.record && !jobSnapshots.has(jobState.record.id) && jobState.record.referenceCount ? ' · 后台任务已上传 ' + jobState.record.referenceCount + ' 张' : '');
+        if (clarificationHint) clarificationHint.textContent = requiredReferenceUploadCount ? '此任务原有 ' + requiredReferenceUploadCount + ' 张参考图，请重新上传至少一张后再提交。尺寸已保留。' : referenceCollection.count ? '参考图和尺寸已保留，请在上方描述中补充后重新生成。' : '尺寸已保留，请在上方描述中补充后重新生成。';
         optimizeStatus.textContent = optimizationReady ? optimizeToggle.checked ? '保留原意，完善构图、光线、色彩与质感；仅理解文字，不额外上传参考图。' : '已关闭视觉优化，将直接使用你的原始描述。' : optimizationAvailableText;
     }
 
     function showError(message) {
         setStage('error');
         errorText.textContent = message || '生成失败，请稍后重试';
-        errorRetry.textContent = pendingNeedsUpload ? '继续上传原任务' : uncertainGeneration ? '重新生成（可能重复计费）' : '重新提交';
+        errorRetry.textContent = jobState.issue?.code === 'UPLOAD_REQUIRED' ? '继续上传原任务' : uncertainGeneration ? '重新生成（可能重复计费）' : '重新提交';
     }
 
     function invalidatePreparedInput() {
@@ -169,7 +189,7 @@
 
     presetsEl.addEventListener('click', function (event) {
         var chip = event.target.closest('.chip');
-        if (!chip || isBusy || isReadingReferences) return;
+        if (!chip || isWorking() || referenceCollection.reading) return;
         invalidatePreparedInput();
         promptEl.value = chip.dataset.prompt || '';
         syncCharCount();
@@ -186,7 +206,7 @@
     /* ------------------------------ 尺寸 ------------------------------ */
     sizeChips.addEventListener('click', function (event) {
         var chip = event.target.closest('.size-chip');
-        if (!chip || isBusy || isReadingReferences) return;
+        if (!chip || isWorking() || referenceCollection.reading) return;
         invalidatePreparedInput();
         var chips = sizeChips.querySelectorAll('.size-chip');
         for (var i = 0; i < chips.length; i++) chips[i].setAttribute('aria-pressed', String(chips[i] === chip));
@@ -195,52 +215,10 @@
     });
 
     /* ------------------------------ 参考图 ------------------------------ */
-    function readFileAsDataUrl(file) {
-        return new Promise(function (resolve, reject) {
-            var reader = new FileReader();
-            reader.onload = function () { resolve(String(reader.result || '')); };
-            reader.onerror = function () { reject(new Error('读取图片失败')); };
-            reader.readAsDataURL(file);
-        });
-    }
-
-    // 长边压到 1600、转 JPEG，控制上行体积（上游单图上限 20MB）
-    function shrinkImage(dataUrl) {
-        return new Promise(function (resolve, reject) {
-            var img = new Image();
-            img.onload = function () {
-                var w = img.naturalWidth || 0;
-                var h = img.naturalHeight || 0;
-                if (!w || !h) return reject(new Error('参考图尺寸无效，请换一张图片'));
-                var scale = Math.min(1, 1600 / Math.max(w, h));
-                if (scale >= 1 && dataUrl.length < 1200000 && /^data:image\/(?:png|jpe?g);base64,/i.test(dataUrl)) return resolve(dataUrl);
-                try {
-                    var cw = Math.round(w * scale);
-                    var chh = Math.round(h * scale);
-                    var canvas = document.createElement('canvas');
-                    canvas.width = cw;
-                    canvas.height = chh;
-                    var ctx = canvas.getContext('2d');
-                    if (!ctx) throw new Error('无法处理参考图');
-                    ctx.fillStyle = '#ffffff';
-                    ctx.fillRect(0, 0, cw, chh);
-                    ctx.drawImage(img, 0, 0, cw, chh);
-                    var resized = canvas.toDataURL('image/jpeg', 0.86);
-                    if (!/^data:image\/jpeg;base64,/.test(resized)) throw new Error('参考图压缩失败');
-                    resolve(resized);
-                } catch (e) {
-                    reject(new Error('参考图处理失败，请换一张 PNG / JPG / WebP 图片'));
-                }
-            };
-            img.onerror = function () { reject(new Error('参考图无法读取，请使用有效的 PNG / JPG / WebP 图片')); };
-            img.src = dataUrl;
-        });
-    }
-
     function renderReferences() {
-        var has = references.length > 0;
+        var has = referenceCollection.count > 0;
         var fragment = document.createDocumentFragment();
-        references.forEach(function (reference, index) {
+        referenceCollection.list().forEach(function (reference, index) {
             var figure = document.createElement('figure');
             figure.className = 'ref-preview-item';
             figure.setAttribute('role', 'listitem');
@@ -269,85 +247,64 @@
     }
 
     async function appendReferences(items, prepare) {
-        if (isBusy || isReadingReferences || !items.length) return false;
+        if (isWorking() || referenceCollection.reading || !items.length) return false;
         invalidatePreparedInput();
-        if (references.length + items.length > MAX_REFERENCES) {
-            showError('最多添加 ' + MAX_REFERENCES + ' 张参考图，请先移除一些图片');
-            return false;
-        }
-        isReadingReferences = true;
+        var operation = referenceCollection.append(items, prepare);
         syncControls();
-        var additions = [];
-        var totalChars = references.reduce(function (total, reference) { return total + reference.dataUrl.length; }, 0);
-        try {
-            for (var index = 0; index < items.length; index++) {
-                var reference = await prepare(items[index]);
-                if (!reference || !/^data:image\/(?:png|jpe?g|webp);base64,/i.test(reference.dataUrl)) throw new Error('参考图格式不支持');
-                totalChars += reference.dataUrl.length;
-                if (totalChars > MAX_REFERENCE_CHARS) throw new Error('参考图总大小过大，请减少图片或换成更小的图片');
-                additions.push(reference);
-            }
-            references = references.concat(additions);
-            requiredReferenceUploadCount = 0;
-            return true;
-        } catch (error) {
-            showError(error.message || '参考图读取失败，换一张试试');
-            return false;
-        } finally {
-            isReadingReferences = false;
-            renderReferences();
-        }
+        var result = await operation;
+        if (result.ok) requiredReferenceUploadCount = 0;
+        else if (result.error) showError(result.error.message || '参考图读取失败，换一张试试');
+        renderReferences();
+        return result.ok;
     }
 
     refInput.addEventListener('change', async function () {
         var files = Array.from(refInput.files || []);
-        if (isBusy || isReadingReferences || !files.length) { refInput.value = ''; return; }
-        invalidatePreparedInput();
         try {
-            files.forEach(function (file) {
-                if (!/^image\/(?:png|jpe?g|webp)$/i.test(file.type)) throw new Error('参考图仅支持 PNG / JPG / WebP 图片');
-                if (!file.size || file.size > MAX_REFERENCE_FILE_BYTES) throw new Error('单张参考图不能超过 20MB，请换成更小的图片');
-            });
-            await appendReferences(files, async function (file) {
-                return { dataUrl: await shrinkImage(await readFileAsDataUrl(file)), name: file.name };
-            });
-        } catch (error) {
-            showError(error.message || '参考图读取失败，换一张试试');
+            await appendReferences(files, referenceProcessor.fromFile);
         } finally {
             refInput.value = '';
         }
     });
 
     refClear.addEventListener('click', function () {
-        if (isBusy || isReadingReferences) return;
+        if (isWorking() || referenceCollection.reading) return;
         invalidatePreparedInput();
-        references = [];
+        referenceCollection.replace([]);
         renderReferences();
     });
 
     refPreview.addEventListener('click', function (event) {
         var button = event.target.closest('button[data-reference-index]');
-        if (!button || !refPreview.contains(button) || isBusy || isReadingReferences) return;
+        if (!button || !refPreview.contains(button) || isWorking() || referenceCollection.reading) return;
         var index = Number(button.dataset.referenceIndex);
-        if (!Number.isInteger(index) || index < 0 || index >= references.length) return;
+        if (!Number.isInteger(index) || index < 0 || index >= referenceCollection.count) return;
         invalidatePreparedInput();
-        references.splice(index, 1);
+        referenceCollection.remove(index);
         renderReferences();
     });
 
     /* ------------------------------ 历史 ------------------------------ */
-    function loadHistory() {
-        try {
-            var raw = localStorage.getItem(HISTORY_KEY);
-            var parsed = raw ? JSON.parse(raw) : [];
-            history = Array.isArray(parsed) ? parsed.filter(function (item) { return item && item.url; }) : [];
-        } catch (e) {
-            history = [];
+    function showHistoryNotice(message) {
+        historyNotice = message;
+        if (serviceStatus) {
+            serviceStatus.hidden = false;
+            serviceStatus.textContent = message;
         }
     }
 
-    function saveHistory() {
-        try { localStorage.setItem(HISTORY_KEY, JSON.stringify(history.slice(0, MAX_HISTORY))); } catch (e) {}
+    function clearHistoryNotice() {
+        if (serviceStatus && serviceStatus.textContent === historyNotice) {
+            serviceStatus.hidden = true;
+            serviceStatus.textContent = '';
+        }
+        historyNotice = null;
+    }
+
+    function loadHistory() {
+        var result = historyStore.load();
+        history = result.entries;
+        if (!result.ok) showHistoryNotice('本地历史暂时无法读取，原有记录未被覆盖。');
     }
 
     function renderHistory() {
@@ -371,19 +328,21 @@
     }
 
     function pushHistory(entry) {
-        history = [entry].concat(history.filter(function (item) { return item.url !== entry.url; })).slice(0, MAX_HISTORY);
-        saveHistory();
+        var result = historyStore.append(entry);
+        history = result.entries;
         renderHistory();
+        return result.ok;
     }
 
     historyClear.addEventListener('click', function () {
         if (!history.length) return;
-        history = [];
-        saveHistory();
+        var result = historyStore.clear();
+        history = result.entries;
+        if (result.ok) clearHistoryNotice();
+        else showHistoryNotice('历史清空失败，记录仍保留，请稍后重试。');
         renderHistory();
     });
 
-    /* ------------------------------ 大图 ------------------------------ */
     function openLightbox(url) {
         if (!url) return;
         lightboxImg.src = url;
@@ -420,7 +379,7 @@
             prompt: prompt,
             inputPrompt: promptEl.value,
             size: currentSize,
-            referenceImages: references.map(function (reference) { return reference.dataUrl; }),
+            referenceImages: referenceCollection.list().map(function (reference) { return reference.dataUrl; }),
             optimizationEnabled: optimizationReady && optimizeToggle.checked
         };
     }
@@ -428,51 +387,9 @@
     function snapshotMatches(snapshot) {
         return !!snapshot && promptEl.value === snapshot.inputPrompt && currentSize === snapshot.size &&
             (optimizationReady && optimizeToggle.checked) === snapshot.optimizationEnabled &&
-            references.length === snapshot.referenceImages.length && references.every(function (reference, index) {
+            referenceCollection.count === snapshot.referenceImages.length && referenceCollection.list().every(function (reference, index) {
                 return reference.dataUrl === snapshot.referenceImages[index];
             });
-    }
-
-    async function referenceHashes(snapshot) {
-        var hashes = [];
-        var encoder = new TextEncoder();
-        for (var index = 0; index < snapshot.referenceImages.length; index++) {
-            var digest = await window.crypto.subtle.digest('SHA-256', encoder.encode(snapshot.referenceImages[index]));
-            hashes.push(Array.from(new Uint8Array(digest), function (byte) { return byte.toString(16).padStart(2, '0'); }).join(''));
-        }
-        return hashes;
-    }
-
-    async function postJson(path, payload, timeout) {
-        var controller = new AbortController();
-        var timer = timeout > 0 ? setTimeout(function () { controller.abort(); }, timeout) : null;
-        try {
-            var resp = await fetch(path, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(payload),
-                signal: controller.signal
-            });
-            var data = null;
-            try { data = await resp.json(); } catch (error) {
-                if (error && error.name === 'AbortError') throw error;
-            }
-            if (!resp.ok || !data || typeof data !== 'object') {
-                var failure = new Error((data && typeof data.error === 'string' && data.error) || ('请求失败 HTTP ' + resp.status));
-                failure.httpStatus = resp.status;
-                failure.code = data && data.code;
-                failure.allowOriginal = data && data.allowOriginal === true;
-                throw failure;
-            }
-            return data;
-        } catch (error) {
-            if (error && error.httpStatus) throw error;
-            var transportError = new Error(error && error.name === 'AbortError' ? path === '/api/image/prepare' ? '视觉优化等待超时，尚未发起生图。' : '生成等待超时，结果尚未确认。服务可能仍在处理，请勿立即重复提交。' : path === '/api/image/prepare' ? '视觉优化连接中断，尚未发起生图。' : '生图连接中断，结果尚未确认。服务可能仍在处理，请勿立即重复提交。');
-            transportError.transport = true;
-            throw transportError;
-        } finally {
-            if (timer !== null) clearTimeout(timer);
-        }
     }
 
     function showOptimization(snapshot, prepared) {
@@ -493,265 +410,200 @@
             entry.optimizedPrompt = prepared.optimizedPrompt;
             showOptimization(snapshot, prepared);
         }
-        pushHistory(entry);
+        var saved = pushHistory(entry);
         uncertainGeneration = false;
+        return saved;
+    }
+
+    function consumeResult(data, snapshot, prepared, acknowledge) {
+        var saved = showResult(data, snapshot, prepared);
+        if (saved) {
+            clearHistoryNotice();
+            if (acknowledge) acknowledge();
+        } else {
+            showHistoryNotice('图片已生成，但本地历史保存失败。请先下载图片' +
+                (acknowledge ? '；恢复凭据已保留，可通过后台任务重新同步。' : '，避免关闭页面后丢失。'));
+        }
+        return saved;
     }
 
     function confirmNewGeneration() {
         return !uncertainGeneration || window.confirm('上一次生成可能仍在处理或已经计费。重新生成可能重复计费，是否继续？');
     }
 
-    function persistPendingJob() {
-        localStorage.setItem(PENDING_JOB_KEY, JSON.stringify(pendingJob));
+    function backgroundSnapshot(record) {
+        return jobSnapshots.get(record.id) || { prompt: record.prompt, inputPrompt: record.prompt, size: record.size, referenceImages: [], optimizationEnabled: record.optimizationEnabled };
     }
 
-    function clearJobPoll() {
-        if (jobPollTimer !== null) clearTimeout(jobPollTimer);
-        jobPollTimer = null;
+    function preparedForJob(job, record) {
+        return job?.optimization && job.optimization.originalPrompt === record.prompt && typeof job.optimization.optimizedPrompt === 'string' && job.optimization.optimizedPrompt.trim() ? job.optimization : null;
     }
 
-    function finishPendingJob() {
-        clearJobPoll();
-        try { localStorage.removeItem(PENDING_JOB_KEY); } catch (error) {}
-        pendingJob = null;
-        jobSnapshot = null;
-        pendingNeedsUpload = false;
-        setBusy(false);
-    }
-
-    function canResumeUpload() {
-        return !!(pendingJob && !pendingJob.accepted && jobSnapshot && Date.now() - pendingJob.createdAt < 600000);
-    }
-
-    function scheduleJobPoll() {
-        clearJobPoll();
-        if (!pendingJob || pendingNeedsUpload || document.hidden) return;
-        jobPollTimer = setTimeout(pollBackgroundJob, 2000);
-    }
-
-    async function jobRequest(path, method, payload, record) {
-        var response = await fetch(path, {
-            method: method,
-            headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + record.token },
-            body: payload ? JSON.stringify(payload) : undefined,
-            cache: 'no-store',
-            signal: AbortSignal.timeout(method === 'POST' ? 60000 : 10000)
+    function renderRecoveryQueue(state) {
+        if (!recoverySelect) return;
+        recoverySelect.disabled = legacyActive;
+        var optionsKey = JSON.stringify([state.record?.id, state.pending.map(function (record) { return [record.id, record.prompt]; })]);
+        if (optionsKey === recoveryOptionsKey) return;
+        recoveryOptionsKey = optionsKey;
+        var placeholder = document.createElement('option');
+        placeholder.value = '';
+        placeholder.textContent = state.pending.length ? '选择待恢复任务（' + state.pending.length + '）' : '没有待恢复任务';
+        var options = [placeholder];
+        state.pending.forEach(function (record) {
+            var option = document.createElement('option');
+            option.value = record.id;
+            option.textContent = record.prompt.slice(0, 36) + (record.prompt.length > 36 ? '…' : '');
+            options.push(option);
         });
-        var data;
-        try { data = await response.json(); } catch (error) {}
-        if (!response.ok || !data || data.status !== 'ok' || !data.job) {
-            var failure = new Error(data && typeof data.error === 'string' ? data.error : '后台任务暂时无法连接，请稍后恢复查询。');
-            failure.httpStatus = response.status;
-            throw failure;
-        }
-        return data.job;
+        recoverySelect.replaceChildren.apply(recoverySelect, options);
+        recoverySelect.value = state.record ? state.record.id : '';
+        recoveryLabel.hidden = state.pending.length < 2 && !!state.record || !state.pending.length;
     }
 
-    function applyJobState(job, record) {
-        if (pendingJob !== record) return;
-        var states = ['queued', 'optimizing', 'generating', 'succeeded', 'needs_clarification', 'failed', 'interrupted'];
-        if (job.id !== record.id || states.indexOf(job.state) === -1 || job.originalPrompt !== record.prompt || job.size !== record.size || job.referenceCount !== record.referenceCount) {
-            throw new Error('后台任务信息与本次需求不一致，已停止同步，请保留此页稍后重试。');
-        }
-        record.accepted = true;
-        pendingNeedsUpload = false;
-        try { persistPendingJob(); } catch (error) {}
-        var snapshot = jobSnapshot || { prompt: record.prompt, inputPrompt: record.prompt, size: record.size, referenceImages: [], optimizationEnabled: record.optimizationEnabled };
-        var prepared = null;
-        if (job.optimization && job.optimization.originalPrompt === record.prompt && typeof job.optimization.optimizedPrompt === 'string' && job.optimization.optimizedPrompt.trim()) {
-            prepared = job.optimization;
-            showOptimization(snapshot, prepared);
-        }
-        if (job.state === 'queued' || job.state === 'optimizing' || job.state === 'generating') {
-            setLoadingPhase(job.state === 'generating' ? 'generate' : record.optimizationEnabled ? 'prepare' : 'generate');
-            loadingText.textContent = job.state === 'queued' ? '已提交后台，可切换应用或锁屏，返回后自动同步…' : job.state === 'optimizing' ? '后台正在优化视觉，完成后自动生成；可切换应用或锁屏…' : '后台正在生成并保存，可切换应用或锁屏，返回后自动同步…';
-            setStage('loading');
-            setBusy(true);
-            return;
-        }
-        if (job.state === 'succeeded') {
-            if (!job.result || typeof job.result.url !== 'string' || !job.result.url) throw new Error('后台结果暂未确认，正在继续同步，请勿重复提交。');
-            showResult(job.result, snapshot, prepared);
-            finishPendingJob();
-            return;
-        }
-        var originalSnapshot = jobSnapshot;
-        if (!originalSnapshot && record.referenceCount && !references.length) requiredReferenceUploadCount = record.referenceCount;
+    function renderJobOutcome(outcome) {
+        var record = outcome.record;
+        var job = outcome.job;
+        var originalSnapshot = jobSnapshots.get(record.id);
+        var snapshot = backgroundSnapshot(record);
+        var prepared = preparedForJob(job, record);
         var referenceReminder = !originalSnapshot && record.referenceCount ? '\n重新提交时请重新上传参考图，本设备不会保存参考图片。' : '';
-        finishPendingJob();
+        jobSnapshots.delete(record.id);
+        isBusy = false;
+        if (job.state === 'succeeded') {
+            consumeResult(job.result, snapshot, prepared, function () {
+                jobController.acknowledge(outcome.sequence);
+            });
+            return;
+        }
+        if (!originalSnapshot && record.referenceCount && !referenceCollection.count) requiredReferenceUploadCount = record.referenceCount;
+        if (prepared) showOptimization(snapshot, prepared);
         if (job.state === 'needs_clarification') {
             clarificationQuestion.textContent = (typeof job.question === 'string' && job.question.trim() ? job.question : '请补充主体和画面需求后重新提交。') + referenceReminder;
             setStage('clarification');
+            jobController.acknowledge(outcome.sequence);
             return;
         }
-        uncertainGeneration = job.state === 'interrupted' || job.state === 'failed' && job.code === 'IMAGE_GENERATION_UNKNOWN';
+        uncertainGeneration = outcome.uncertain;
         if (job.allowOriginal === true && job.code === 'OPTIMIZATION_UNAVAILABLE' && originalSnapshot && snapshotMatches(originalSnapshot)) {
             pendingOriginalSnapshot = originalSnapshot;
             useOriginalBtn.hidden = false;
         }
         showError((typeof job.error === 'string' && job.error ? job.error : job.state === 'interrupted' ? '后台服务已重启，本次任务结果未确认，未自动重复生成。请先检查历史图片，再决定是否重新提交。' : '后台任务未完成，请调整描述或重新提交。') + referenceReminder);
+        jobController.acknowledge(outcome.sequence);
+    }
+
+    function renderJobState(state) {
+        if (legacyActive || unsavedLegacyResult) {
+            deferredJobState = state;
+            renderRecoveryQueue(Object.assign({}, state, { record: null }));
+            return;
+        }
+        jobState = state;
+        renderRecoveryQueue(state);
+        var record = state.record;
+        if (record) {
+            var snapshot = backgroundSnapshot(record);
+            if (renderedJobId !== record.id) {
+                renderedJobId = record.id;
+                invalidatePreparedInput();
+                requiredReferenceUploadCount = 0;
+                promptEl.value = snapshot.inputPrompt;
+                lastPrompt = record.prompt;
+                currentSize = record.size;
+                optimizeToggle.checked = record.optimizationEnabled;
+                referenceCollection.replace(snapshot.referenceImages.map(function (dataUrl, index) {
+                    return { dataUrl: dataUrl, name: snapshot.referenceNames?.[index] || '参考图 ' + (index + 1) };
+                }));
+                renderReferences();
+                sizeChips.querySelectorAll('.size-chip').forEach(function (chip) { chip.setAttribute('aria-pressed', String(chip.dataset.size === currentSize)); });
+                if (sizeNote) sizeNote.textContent = currentSize === 'auto' ? '自动 · 模型自适应' : currentSize + ' · 2K';
+                syncCharCount();
+            }
+            setLoadingPhase(state.business === 'generating' ? 'generate' : record.optimizationEnabled ? 'prepare' : 'generate');
+            var prepared = preparedForJob(state.job, record);
+            if (prepared) showOptimization(snapshot, prepared);
+            if (state.issue?.code === 'UPLOAD_REQUIRED') {
+                showError(state.issue.message);
+            } else {
+                loadingText.textContent = state.network === 'uploading' ? '正在上传，完成后可切到后台…' :
+                    state.network === 'offline' ? '连接暂时中断，后台任务可能仍在处理；保持此页或返回后会自动同步，请勿重复提交。' :
+                    state.issue?.code === 'UPLOAD_UNCONFIRMED' ? state.issue.message :
+                    state.business === 'queued' ? '已提交后台，可切换应用或锁屏，返回后自动同步…' :
+                    state.business === 'optimizing' ? '后台正在优化视觉，完成后自动生成；可切换应用或锁屏…' :
+                    state.business === 'generating' ? '后台正在生成并保存，可切换应用或锁屏，返回后自动同步…' :
+                    '正在恢复后台任务，确认结果前不会重复生成…';
+                setStage('loading');
+            }
+        } else if (state.outcome && state.outcome.sequence !== renderedOutcomeSequence) {
+            renderedOutcomeSequence = state.outcome.sequence;
+            renderJobOutcome(state.outcome);
+            renderedJobId = null;
+        }
         syncControls();
     }
 
-    async function pollBackgroundJob() {
-        clearJobPoll();
-        if (!pendingJob || jobPolling || document.hidden) return;
-        var record = pendingJob;
-        jobPolling = true;
-        try {
-            applyJobState(await jobRequest('/api/image/jobs/' + encodeURIComponent(record.id), 'GET', null, record), record);
-        } catch (error) {
-            if (pendingJob !== record) return;
-            if (error.httpStatus === 404) {
-                if (canResumeUpload()) {
-                    pendingNeedsUpload = true;
-                    showError('尚未确认上传完成，服务器暂未找到任务。可继续上传同一个任务，不会主动新建重复任务。');
-                } else {
-                    uncertainGeneration = record.accepted;
-                    if (!jobSnapshot && record.referenceCount && !references.length) requiredReferenceUploadCount = record.referenceCount;
-                    finishPendingJob();
-                    showError('后台任务已过期或无法找回，不会自动重新生成。请先检查最近生成；需要重新提交时请重新上传参考图。');
-                }
-            } else {
-                loadingText.textContent = '连接暂时中断，后台任务可能仍在处理；保持此页或返回后会自动同步，请勿重复提交。';
-                setStage('loading');
-            }
-        } finally {
-            jobPolling = false;
-            syncControls();
-            scheduleJobPoll();
-        }
-    }
-
-    async function uploadBackgroundJob() {
-        if (!pendingJob || !jobSnapshot || jobPolling) return;
-        var record = pendingJob;
-        if (record.accepted || Date.now() - record.createdAt >= 600000) {
-            pendingNeedsUpload = false;
-            await pollBackgroundJob();
-            return;
-        }
-        clearJobPoll();
-        jobPolling = true;
-        pendingNeedsUpload = false;
-        setBusy(true);
-        setStage('loading');
-        loadingText.textContent = '正在上传，完成后可切到后台…';
-        var payload = { requestId: record.id, prompt: jobSnapshot.prompt, size: jobSnapshot.size, optimize: jobSnapshot.optimizationEnabled };
-        if (jobSnapshot.referenceImages.length) payload.referenceImages = jobSnapshot.referenceImages.slice();
-        try {
-            applyJobState(await jobRequest('/api/image/jobs', 'POST', payload, record), record);
-        } catch (error) {
-            if (pendingJob !== record) return;
-            if (error.httpStatus >= 400 && error.httpStatus < 500 && error.httpStatus !== 408) {
-                uncertainGeneration = error.httpStatus === 409;
-                finishPendingJob();
-                showError(error.message || '任务未能提交，请重新检查输入。');
-            } else {
-                loadingText.textContent = '正在确认后台任务是否已接收，请勿重复提交…';
-                setStage('loading');
-            }
-        } finally {
-            jobPolling = false;
-            syncControls();
-            if (pendingJob === record) await pollBackgroundJob();
-        }
-    }
-
     async function startBackgroundJob(snapshot) {
-        var tokenBytes = new Uint8Array(32);
-        window.crypto.getRandomValues(tokenBytes);
-        pendingJob = {
-            id: newRequestId(),
-            token: Array.from(tokenBytes, function (byte) { return byte.toString(16).padStart(2, '0'); }).join(''),
-            createdAt: Date.now(),
-            accepted: false,
-            prompt: snapshot.prompt,
-            size: snapshot.size,
-            referenceCount: snapshot.referenceImages.length,
-            optimizationEnabled: snapshot.optimizationEnabled
+        var record = jobController.create(snapshot);
+        jobSnapshots.set(record.id, Object.assign({}, snapshot, { referenceNames: referenceCollection.list().map(function (reference) { return reference.name; }) }));
+        await jobController.upload(record.id);
+    }
+
+    function initializeBackgroundJobs() {
+        recoveryLabel = document.createElement('label');
+        recoveryLabel.className = 'studio-hint studio-recovery';
+        recoveryLabel.textContent = '后台任务 ';
+        recoverySelect = document.createElement('select');
+        recoverySelect.className = 'chip';
+        recoverySelect.setAttribute('aria-label', '选择需要恢复的后台任务');
+        recoverySelect.addEventListener('change', function () {
+            if (legacyActive || !recoverySelect.value) return;
+            unsavedLegacyResult = false;
+            deferredJobState = null;
+            jobController.activate(recoverySelect.value);
+        });
+        recoveryLabel.appendChild(recoverySelect);
+        if (serviceStatus?.parentElement) serviceStatus.parentElement.appendChild(recoveryLabel);
+        var storage = {
+            getItem: function (key) { return localStorage.getItem(key); },
+            setItem: function (key, value) { localStorage.setItem(key, value); },
+            removeItem: function (key) { localStorage.removeItem(key); },
+            key: function (index) { return localStorage.key(index); },
+            get length() { return localStorage.length; }
         };
-        jobSnapshot = snapshot;
-        try { persistPendingJob(); } catch (error) {
-            pendingJob = null;
-            jobSnapshot = null;
-            throw new Error('浏览器无法保存后台任务凭据，尚未提交生成。请允许本站本地存储后重试。');
-        }
-        await uploadBackgroundJob();
-    }
-
-    function restorePendingJob() {
-        try {
-            var raw = localStorage.getItem(PENDING_JOB_KEY);
-            if (!raw) return false;
-            var record = JSON.parse(raw);
-            if (!record || !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(record.id) || !/^[0-9a-f]{64}$/.test(record.token) || typeof record.prompt !== 'string' || !record.prompt.trim() || record.prompt.length > MAX_PROMPT || ['auto', '1:1', '3:4', '4:3', '9:16', '16:9'].indexOf(record.size) === -1 || !Number.isInteger(record.referenceCount) || record.referenceCount < 0 || record.referenceCount > MAX_REFERENCES || !Number.isFinite(record.createdAt) || typeof record.accepted !== 'boolean' || typeof record.optimizationEnabled !== 'boolean') {
-                localStorage.removeItem(PENDING_JOB_KEY);
-                return false;
-            }
-            pendingJob = record;
-            promptEl.value = record.prompt;
-            lastPrompt = record.prompt;
-            currentSize = record.size;
-            sizeChips.querySelectorAll('.size-chip').forEach(function (chip) { chip.setAttribute('aria-pressed', String(chip.dataset.size === currentSize)); });
-            if (sizeNote) sizeNote.textContent = currentSize === 'auto' ? '自动 · 模型自适应' : currentSize + ' · 2K';
-            syncCharCount();
-            setLoadingPhase(record.optimizationEnabled ? 'prepare' : 'generate');
-            loadingText.textContent = '正在恢复后台任务，确认结果前不会重复生成…';
-            setStage('loading');
-            setBusy(true);
-            return true;
-        } catch (error) {
-            return false;
-        }
-    }
-
-    function wakeBackgroundJob() {
-        if (!pendingJob || document.hidden) return;
-        clearJobPoll();
-        if (!pendingNeedsUpload) pollBackgroundJob();
+        jobController = createStudioJobController({
+            store: createStudioJobStore(storage),
+            getSnapshot: function (id) { return jobSnapshots.get(id); },
+            cryptoImpl: window.crypto,
+            documentTarget: document,
+            windowTarget: window
+        });
+        jobController.subscribe(renderJobState);
+        jobController.start();
+        return !!jobState.record;
     }
 
     async function sendImage(snapshot, prepared) {
-        if (!snapshotMatches(snapshot)) throw new Error('输入已变化，本次准备已取消，请重新生成。');
-        var payload = {
-            prompt: snapshot.prompt,
-            size: snapshot.size,
-            requestId: prepared ? prepared.preparationRequestId : newRequestId()
-        };
-        if (snapshot.referenceImages.length) payload.referenceImages = snapshot.referenceImages.slice();
-        if (prepared) payload.optimizationToken = prepared.optimizationToken;
         setLoadingPhase('generate');
         try {
-            var data = await postJson('/api/image', payload, REQUEST_TIMEOUT);
-            if (data.status !== 'ok' || typeof data.url !== 'string' || !data.url) {
-                var invalid = new Error(typeof data.error === 'string' ? data.error : '生成结果未确认，请勿盲目重试；重新生成可能重复计费。');
-                invalid.uncertain = true;
-                throw invalid;
-            }
-            showResult(data, snapshot, prepared);
+            var outcome = await legacyClient.generate(snapshot, prepared, {
+                isCurrent: function () { return snapshotMatches(snapshot); }
+            });
+            unsavedLegacyResult = !consumeResult(outcome.result, snapshot, prepared);
         } catch (error) {
-            if (error.transport || error.uncertain || error.httpStatus >= 500 || error.httpStatus === 409 || error.httpStatus < 400) uncertainGeneration = true;
+            if (error.uncertain) uncertainGeneration = true;
             throw error;
         }
     }
 
     async function prepareImage(snapshot) {
         setLoadingPhase('prepare');
-        var hashes = await referenceHashes(snapshot);
-        if (!snapshotMatches(snapshot)) throw new Error('输入已变化，本次准备已取消，请重新生成。');
-        var prepared;
-        var preparationRequestId = newRequestId();
+        var outcome;
         try {
-            prepared = await postJson('/api/image/prepare', {
-                prompt: snapshot.prompt,
-                size: snapshot.size,
-                referenceHashes: hashes,
-                requestId: preparationRequestId
-            }, 0);
+            outcome = await legacyClient.prepare(snapshot, {
+                isCurrent: function () { return snapshotMatches(snapshot); }
+            });
         } catch (error) {
-            var canUseOriginal = error.transport || ([502, 503, 504].indexOf(error.httpStatus) !== -1 && error.code === 'OPTIMIZATION_UNAVAILABLE' && error.allowOriginal);
-            if (canUseOriginal && snapshotMatches(snapshot)) {
+            if (error.allowOriginal && snapshotMatches(snapshot)) {
                 pendingOriginalSnapshot = snapshot;
                 useOriginalBtn.hidden = false;
                 showError(error.message + '\n你可以修改后重新提交，或明确选择使用原词继续生成。');
@@ -759,25 +611,35 @@
             }
             throw error;
         }
-        if (!snapshotMatches(snapshot)) throw new Error('输入已变化，本次准备已取消，请重新生成。');
-        if (prepared.status === 'needs_clarification') {
-            if (typeof prepared.question !== 'string' || !prepared.question.trim()) throw new Error('视觉优化未返回有效的补充问题，请修改描述后重新提交。');
-            clarificationQuestion.textContent = prepared.question;
+        if (outcome.state === 'needs_clarification') {
+            clarificationQuestion.textContent = outcome.question;
             setStage('clarification');
             return null;
         }
-        if (prepared.status !== 'ready' || typeof prepared.optimizationToken !== 'string' || !prepared.optimizationToken ||
-            prepared.originalPrompt !== snapshot.prompt || typeof prepared.optimizedPrompt !== 'string' || !prepared.optimizedPrompt.trim()) {
-            throw new Error('优化结果与本次需求不一致，已停止生图，请重新提交。');
+        showOptimization(snapshot, outcome.prepared);
+        return outcome.prepared;
+    }
+
+    function beginLegacyOperation() {
+        legacyActive = true;
+        renderRecoveryQueue(jobState);
+    }
+
+    function finishLegacyOperation() {
+        legacyActive = false;
+        setBusy(false);
+        if (deferredJobState) {
+            var state = deferredJobState;
+            deferredJobState = null;
+            renderJobState(state);
+        } else {
+            renderRecoveryQueue(jobState);
         }
-        prepared.preparationRequestId = preparationRequestId;
-        showOptimization(snapshot, prepared);
-        return prepared;
     }
 
     async function generate() {
-        if (isBusy || pendingJob || isReadingReferences || healthPending) return;
-        if (requiredReferenceUploadCount && !references.length) {
+        if (isWorking() || referenceCollection.reading || healthPending) return;
+        if (requiredReferenceUploadCount && !referenceCollection.count) {
             showError('原任务有 ' + requiredReferenceUploadCount + ' 张参考图。请先重新上传至少一张参考图，再提交生成，避免误用纯文字生成。');
             return;
         }
@@ -797,6 +659,7 @@
         }
         if (!confirmNewGeneration()) return;
 
+        unsavedLegacyResult = false;
         invalidatePreparedInput();
         var snapshot = captureSnapshot(prompt);
         lastPrompt = prompt;
@@ -809,13 +672,15 @@
                 await startBackgroundJob(snapshot);
                 return;
             }
+            beginLegacyOperation();
             var prepared = snapshot.optimizationEnabled ? await prepareImage(snapshot) : null;
             if (snapshot.optimizationEnabled && !prepared) return;
             await sendImage(snapshot, prepared);
         } catch (e) {
             showError(e && e.message ? e.message : '生成失败，请稍后重试');
         } finally {
-            if (!pendingJob) setBusy(false);
+            if (legacyActive) finishLegacyOperation();
+            else setBusy(false);
         }
     }
 
@@ -828,15 +693,14 @@
         generate();
     });
     errorRetry.addEventListener('click', function () {
-        if (pendingJob) {
-            if (pendingNeedsUpload && canResumeUpload()) uploadBackgroundJob();
-            else pollBackgroundJob();
+        if (jobState.record) {
+            jobController.retry();
             return;
         }
         generate();
     });
     useOriginalBtn.addEventListener('click', async function () {
-        if (isBusy || isReadingReferences || !pendingOriginalSnapshot) return;
+        if (isWorking() || referenceCollection.reading || !pendingOriginalSnapshot) return;
         var snapshot = pendingOriginalSnapshot;
         if (!serviceReady || !snapshotMatches(snapshot)) {
             invalidatePreparedInput();
@@ -845,6 +709,7 @@
         }
         pendingOriginalSnapshot = null;
         useOriginalBtn.hidden = true;
+        unsavedLegacyResult = false;
         setLoadingPhase('generate');
         setBusy(true);
         setStage('loading');
@@ -853,15 +718,17 @@
                 await startBackgroundJob(Object.assign({}, snapshot, { optimizationEnabled: false }));
                 return;
             }
+            beginLegacyOperation();
             await sendImage(snapshot, null);
         } catch (error) {
             showError(error.message || '生成失败，请稍后重试');
         } finally {
-            if (!pendingJob) setBusy(false);
+            if (legacyActive) finishLegacyOperation();
+            else setBusy(false);
         }
     });
     clarificationEdit.addEventListener('click', function () {
-        if (!isBusy && !isReadingReferences) promptEl.focus();
+        if (!isWorking() && !referenceCollection.reading) promptEl.focus();
     });
 
     resultImg.addEventListener('click', function () { openLightbox(resultImg.src); });
@@ -869,20 +736,8 @@
     // 把结果当参考图，走图生图继续改
     asRefBtn.addEventListener('click', async function () {
         var url = resultImg.getAttribute('src');
-        if (!url || isBusy || isReadingReferences) return;
-        var added = await appendReferences([url], async function (source) {
-            var resp = await fetch(source);
-            if (!resp.ok) throw new Error('这张图读取失败，可先下载再手动上传');
-            var blob = await resp.blob();
-            if (!blob.size || blob.size > MAX_REFERENCE_FILE_BYTES) throw new Error('这张图片超过 20MB，请下载并缩小后再上传');
-            var dataUrl = await new Promise(function (resolve, reject) {
-                var reader = new FileReader();
-                reader.onload = function () { resolve(String(reader.result || '')); };
-                reader.onerror = reject;
-                reader.readAsDataURL(blob);
-            });
-            return { dataUrl: await shrinkImage(dataUrl), name: '生成结果' };
-        });
+        if (!url || isWorking() || referenceCollection.reading) return;
+        var added = await appendReferences([url], referenceProcessor.fromUrl);
         if (added) promptEl.focus();
     });
 
@@ -895,8 +750,7 @@
         setStage('empty');
         if (sizeNote) sizeNote.textContent = '默认 1:1 · 2K';
         renderReferences();
-        var hasPendingJob = restorePendingJob();
-        if (hasPendingJob) pollBackgroundJob();
+        var hasPendingJob = initializeBackgroundJobs();
 
         fetch('/api/health', { signal: AbortSignal.timeout(8000) }).then(function (response) {
             if (!response.ok) throw new Error('Service unavailable');
@@ -908,13 +762,14 @@
             optimizationReady = data.promptOptimizationReady === true && modeIsText && secureFeatures;
             if (data.promptOptimizationReady === true && !modeIsText) optimizationAvailableText = '当前视觉优化模式暂不支持，将按原始描述生成。';
             else if (data.promptOptimizationReady === true && !secureFeatures) optimizationAvailableText = '视觉优化需要 HTTPS 安全连接及新版浏览器；当前可直接使用原词生成。';
-            optimizeToggle.checked = pendingJob ? pendingJob.optimizationEnabled : optimizationReady;
+            optimizeToggle.checked = jobState.record ? jobState.record.optimizationEnabled : optimizationReady;
             if (typeof data.imageReady === 'boolean') serviceReady = data.imageReady;
+            if (data.imageJobsStatus?.code === 'IMAGE_JOB_STORAGE_UNAVAILABLE') serviceReady = false;
             healthPending = false;
             setBusy(isBusy);
             if (serviceStatus && !serviceReady) {
                 serviceStatus.hidden = false;
-                serviceStatus.textContent = '生图服务尚未启用，请联系管理员配置。';
+                serviceStatus.textContent = data.imageJobsStatus?.code === 'IMAGE_JOB_STORAGE_UNAVAILABLE' ? '后台任务存储异常，已暂停新生成；已有任务仍会继续查询，请稍后重试。' : '生图服务尚未启用，请联系管理员配置。';
             }
         }).catch(function () {
             optimizationReady = false;
@@ -931,15 +786,6 @@
         }
 
         if (themeToggle) themeToggle.addEventListener('click', toggleTheme);
-        document.addEventListener('visibilitychange', function () {
-            if (document.hidden) clearJobPoll();
-            else wakeBackgroundJob();
-        });
-        if (typeof window.addEventListener === 'function') {
-            window.addEventListener('pageshow', wakeBackgroundJob);
-            window.addEventListener('online', wakeBackgroundJob);
-            window.addEventListener('pagehide', clearJobPoll);
-        }
     }
 
     init();

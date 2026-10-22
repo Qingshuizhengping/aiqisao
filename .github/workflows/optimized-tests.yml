@@ -1,0 +1,31 @@
+name: Optimized application tests
+
+on:
+  push:
+    paths:
+      - 'optimized/**'
+      - '.github/workflows/optimized-tests.yml'
+  pull_request:
+    paths:
+      - 'optimized/**'
+      - '.github/workflows/optimized-tests.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: optimized
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: optimized/package-lock.json
+      - run: npm ci --ignore-scripts --no-audit --no-fund
+      - run: npm test

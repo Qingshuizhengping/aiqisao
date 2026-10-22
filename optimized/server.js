@@ -20,7 +20,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC_DIR = path.join(__dirname, 'public');
 const app = express();
 const PORT = process.env.PORT || 3000;
-const CLIENT_VERSION = 'qisao-v20261021-7';
+const CLIENT_VERSION = 'qisao-v20261023-1';
 const imageJobs = createImageJobService({ storeDirectory: path.join(__dirname, 'var', 'image-jobs'), getApiKey: getImageApiKey });
 let imageJobsReady = false;
 const MODEL_REQUEST_OPTIONS = MODEL === 'zai-org/GLM-5.3-Flash' ? { reasoning_effort: 'low' } : {};
@@ -28,7 +28,7 @@ const MODEL_REQUEST_OPTIONS = MODEL === 'zai-org/GLM-5.3-Flash' ? { reasoning_ef
 function renderClientAnswer(content, clientVersion) {
     const html = renderMarkdown(content);
     if (clientVersion === CLIENT_VERSION) return html;
-    return html + '<p class="client-update"><a href="/?v=20261021-7">启用新版实时排版（请先保存草稿）</a><br><small>对话记录保留，无需重装。</small></p>';
+    return html + '<p class="client-update"><a href="/?v=20261023-1">启用新版实时排版（请先保存草稿）</a><br><small>对话记录保留，无需重装。</small></p>';
 }
 
 app.disable('x-powered-by');
@@ -138,48 +138,16 @@ app.get('/api/health', (req, res) => res.json({
     model: MODEL,
     imageModel: IMAGE_MODEL,
     imageReady: Boolean(getImageApiKey()),
-    imageJobsReady,
+    imageJobsReady: imageJobsReady && imageJobs.health().ready,
+    imageJobsStatus: imageJobsReady ? imageJobs.health() : { ready: false },
     ...getPromptOptimizationHealth(),
 }));
 
 // ---------- 生图（独立入口 /image 使用） ----------
 // 生图按次计费，公网必须挡一层：每 IP 每分钟 5 次、每小时 30 次
-const IMAGE_LIMIT_MINUTE = 5;
-const IMAGE_LIMIT_HOUR = 30;
-const IMAGE_OWNER_CAPACITY = 2048;
-const imageHits = new Map();
-
 function clientIp(req) {
     return req.ip || req.socket.remoteAddress || 'unknown';
 }
-
-function allowImage(ip) {
-    const now = Date.now();
-    if (!imageHits.has(ip) && imageHits.size >= IMAGE_OWNER_CAPACITY) {
-        for (const [owner, record] of imageHits) {
-            if (!record.hour.some(time => now - time < 3600000)) imageHits.delete(owner);
-        }
-        if (imageHits.size >= IMAGE_OWNER_CAPACITY) return false;
-    }
-    const rec = imageHits.get(ip) || { minute: [], hour: [] };
-    rec.minute = rec.minute.filter((t) => now - t < 60000);
-    rec.hour = rec.hour.filter((t) => now - t < 3600000);
-    if (rec.minute.length >= IMAGE_LIMIT_MINUTE || rec.hour.length >= IMAGE_LIMIT_HOUR) {
-        imageHits.set(ip, rec);
-        return false;
-    }
-    rec.minute.push(now);
-    rec.hour.push(now);
-    imageHits.set(ip, rec);
-    return true;
-}
-
-setInterval(() => {
-    const now = Date.now();
-    for (const [ip, rec] of imageHits) {
-        if (!rec.hour.some((t) => now - t < 3600000)) imageHits.delete(ip);
-    }
-}, 600000).unref();
 
 function imageClientSignal(req, res) {
     const controller = new AbortController();
@@ -251,8 +219,7 @@ app.post('/api/image', async (req, res) => {
     const owner = clientIp(req);
     const client = imageClientSignal(req, res);
     try {
-        const result = await generateImageRequest(req.body || {}, owner, apiKey,
-            { signal: client.signal, allowGeneration: () => allowImage(owner) });
+        const result = await generateImageRequest(req.body || {}, owner, apiKey, { signal: client.signal });
         if (!res.destroyed && !res.writableEnded) return res.json({ status: 'ok', ...result });
     } catch (error) {
         return imageError(res, error);

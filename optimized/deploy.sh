@@ -49,6 +49,9 @@ copy() {
 
 cd "$ROOT/$OUT"
 
+npm ci --ignore-scripts --no-audit --no-fund
+npm test
+
 # 1. 本地构建
 if [ "${SKIP_BUILD:-0}" != "1" ]; then
     echo "==> 构建前端产物"
@@ -64,7 +67,7 @@ remote_archive="/tmp/$(basename "$local_stage").tgz"
 trap 'rm -f -- "$archive"; rmdir -- "$local_stage"' EXIT
 tar czf "$archive" --exclude='public/static/gen' --exclude='public/downloads' \
     --exclude='*/.*' --exclude='*.apk' --exclude='*.aab' --exclude='*.pem' --exclude='*.key' \
-    server.js api/_env.js api/image_config.js api/image_gen.js api/image_prompt.js api/image_jobs.js public package.json package-lock.json
+    server.js api/_env.js api/image_config.js api/image_gen.js api/image_prompt.js api/optimizer_client.js api/image_policy.js api/image_jobs.js api/image_job_record.js api/image_job_store.js api/image_job_runner.js public package.json package-lock.json
 
 # 3. 上传
 echo "==> 上传到 $REMOTE"
@@ -89,7 +92,7 @@ if not app.is_absolute() or app.resolve() != app or len(app.parts) < 3:
     raise SystemExit('Unsafe or symbolic application directory')
 if not app.is_dir() or not (app / 'api/_config.js').is_file():
     raise SystemExit('Initial setup required: configure api/_config.js and provider credentials before deploying; the default model is never installed automatically.')
-required = {'server.js', 'api/_env.js', 'api/image_config.js', 'api/image_gen.js', 'api/image_prompt.js', 'api/image_jobs.js', 'package.json', 'package-lock.json'}
+required = {'server.js', 'api/_env.js', 'api/image_config.js', 'api/image_gen.js', 'api/image_prompt.js', 'api/optimizer_client.js', 'api/image_policy.js', 'api/image_jobs.js', 'api/image_job_record.js', 'api/image_job_store.js', 'api/image_job_runner.js', 'package.json', 'package-lock.json'}
 seen = set()
 with tarfile.open(sys.argv[2]) as bundle:
     for member in bundle.getmembers():
@@ -168,7 +171,15 @@ for item in source.rglob('*'):
     else:
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(item, target)
-        if item.relative_to(source).parts[0] == 'public': target.chmod(0o644)
+        if item.relative_to(source).parts[0] == 'public':
+            target.chmod(0o644)
+            if item.suffix not in {'.br', '.gz'}:
+                for suffix in ('.br', '.gz'):
+                    if not Path(str(item) + suffix).exists():
+                        stale = Path(str(target) + suffix)
+                        if stale.is_symlink():
+                            raise SystemExit('Refusing a symbolic compressed destination')
+                        stale.unlink(missing_ok=True)
 PY
 complete=0
 rollback() {
@@ -204,7 +215,8 @@ sha256sum -c "$backup/preserved.sha256"
 pm2 restart "$name" >/dev/null
 healthy=0
 for attempt in $(seq 1 15); do
-    if curl -fsS --max-time 3 "http://127.0.0.1:$port/api/health" -o "$stage/health-after.json"; then healthy=1; break; fi
+    if curl -fsS --max-time 3 "http://127.0.0.1:$port/api/health" -o "$stage/health-after.json" &&
+        node -e 'const h=JSON.parse(require("node:fs").readFileSync(process.argv[1],"utf8"));process.exit(h.status==="ok"&&h.imageJobsReady===true?0:1)' "$stage/health-after.json"; then healthy=1; break; fi
     sleep 1
 done
 test "$healthy" -eq 1
@@ -213,6 +225,7 @@ node --input-type=module - "$stage/health-before.json" "$stage/health-after.json
 import fs from 'node:fs';
 const health = process.argv.slice(2).map(file => JSON.parse(fs.readFileSync(file, 'utf8')));
 if (!health[0].model || health.some(entry => entry.status !== 'ok' || entry.model !== health[0].model)) throw new Error('Health check failed or the configured model changed');
+if (health.slice(1).some(entry => entry.imageJobsReady !== true)) throw new Error('Background image jobs are not ready');
 console.log(JSON.stringify({ status: 'ok', model: health[0].model }));
 JS
 curl -fsS --max-time 15 "https://$host/sw.js" -o "$stage/sw.js"

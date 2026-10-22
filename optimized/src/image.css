@@ -248,6 +248,9 @@
 .generate-btn:disabled { opacity: .55; }
 
 .studio-hint { margin: -6px 0 0; color: var(--muted); font-size: 10.5px; text-align: center; }
+.studio-recovery { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: center; gap: 8px; margin: 0; text-align: left; }
+.studio-recovery[hidden] { display: none; }
+.studio-recovery select { min-width: 0; width: 100%; max-width: 100%; min-height: 44px; font-size: 16px; text-overflow: ellipsis; }
 
 /* ------------------------------ 结果区 ------------------------------ */
 .studio-stage-wrap { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
