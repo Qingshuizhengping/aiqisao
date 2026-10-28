@@ -14,16 +14,14 @@ function authFrame(title, subtitle, content) {
 export function loginScreen(onLogin, message = '') {
     const username = input('账号', { name: 'username', autocomplete: 'username', required: true, placeholder: '请输入内部账号', maxlength: 100 });
     const password = input('密码', { name: 'password', type: 'password', autocomplete: 'current-password', required: true, placeholder: '请输入密码' });
-    const totp = input('动态验证码', { name: 'totp', autocomplete: 'one-time-code', inputmode: 'numeric', pattern: '[0-9]{6}', maxlength: 6, placeholder: '已绑定验证器时填写', hint: '未绑定时可留空；系统或项目管理员使用身份验证器中的 6 位验证码。' });
     const errors = el('div');
-    const form = el('form', { className: 'auth-form' }, message && notice(message, 'warning'), username.wrapper, password.wrapper, totp.wrapper, errors, button('登录工作空间', null, { className: 'button primary', type: 'submit', glyph: 'arrow' }));
+    const form = el('form', { className: 'auth-form' }, message && notice(message, 'warning'), username.wrapper, password.wrapper, errors, button('登录工作空间', null, { className: 'button primary', type: 'submit', glyph: 'arrow' }));
     form.addEventListener('submit', event => {
         event.preventDefault();
         submitting(form, async () => {
-            const data = await api('/api/auth/login', { method: 'POST', body: { username: username.control.value.trim(), password: password.control.value, ...(totp.control.value.trim() ? { totp: totp.control.value.trim() } : {}) } });
+            const data = await api('/api/auth/login', { method: 'POST', body: { username: username.control.value.trim(), password: password.control.value } });
             setSession(data);
             password.control.value = '';
-            totp.control.value = '';
             await onLogin(data);
         }, errors);
     });
@@ -48,39 +46,6 @@ export function passwordScreen(user, onChanged, onLogout) {
     });
     if (onLogout) form.append(button('退出此账号', onLogout, { className: 'button quiet' }));
     return authFrame('设置登录密码', user.displayName + '，欢迎加入内部工作空间', form);
-}
-
-export function mfaScreen(onEnrolled, onLogout) {
-    const password = input('确认登录密码', { type: 'password', autocomplete: 'current-password', required: true });
-    const errors = el('div');
-    const enrollment = el('div', { className: 'stack', hidden: true });
-    const start = el('form', { className: 'auth-form' }, notice('系统或项目管理员需绑定身份验证器，才能继续使用内部工作空间。'), password.wrapper, errors, button('获取绑定密钥', null, { type: 'submit', className: 'button primary' }));
-    start.addEventListener('submit', event => {
-        event.preventDefault();
-        submitting(start, async () => {
-            const data = await api('/api/auth/mfa/setup', { method: 'POST', body: { password: password.control.value } });
-            password.control.value = '';
-            const code = input('身份验证器中的验证码', { name: 'code', autocomplete: 'one-time-code', inputmode: 'numeric', pattern: '[0-9]{6}', maxlength: 6, required: true });
-            const confirmErrors = el('div');
-            const confirm = el('form', { className: 'auth-form' }, code.wrapper, confirmErrors, button('验证并进入工作空间', null, { type: 'submit', className: 'button primary' }));
-            confirm.addEventListener('submit', confirmEvent => {
-                confirmEvent.preventDefault();
-                submitting(confirm, async () => {
-                    const completed = await api('/api/auth/mfa/confirm', { method: 'POST', body: { code: code.control.value.trim() } });
-                    setSession(completed);
-                    enrollment.replaceChildren();
-                    await onEnrolled(completed);
-                }, confirmErrors);
-            });
-            enrollment.replaceChildren(el('p', { className: 'muted', text: '在 Microsoft Authenticator、Google Authenticator 等应用中选择“手动输入密钥”，类型选择基于时间。' }), el('div', { className: 'secret-key', text: data.secret }),
-                button('复制绑定密钥', async () => { try { await navigator.clipboard.writeText(data.secret); toast('绑定密钥已复制，请勿转发。'); } catch { toast('请长按上方密钥手动复制。'); } }, { glyph: 'copy' }),
-                el('small', { text: '密钥只在此设备页面展示，不会发送给外部二维码服务。绑定完成前不要关闭身份验证器。' }), confirm);
-            enrollment.hidden = false;
-            start.hidden = true;
-            code.control.focus();
-        }, errors);
-    });
-    return authFrame('开启管理员验证', '为管理权限增加一道验证', el('div', { className: 'stack' }, start, enrollment, onLogout && button('退出此账号', onLogout, { className: 'button quiet' })));
 }
 
 export function accountPanel(user, { onUserChanged, onLogout }) {

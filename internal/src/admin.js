@@ -2,62 +2,7 @@ import { api, query } from './api.js';
 import { messageView } from './chat.js';
 import { el, button, input, select, panel, notice, empty, badge, formatDate, submitting, toast } from './ui.js';
 
-export function openAccountsPanel(user) {
-    const list = el('div', { className: 'stack-tight' }, empty('正在读取内部账号…'));
-    const errors = el('div');
-    const view = panel('内部账号', el('div', { className: 'stack' }, notice('账号停用后，其现有登录会话将失效。系统管理员需要完成验证器设置后才能访问管理功能。'),
-        button('创建内部账号', () => editAccount(), { className: 'button primary', glyph: 'plus' }), errors, list), { subtitle: '管理访问权，而不是共享账号。', wide: true });
-    function editAccount(account) {
-        const username = input('用户名', { required: true, maxlength: 64, value: account?.username || '', disabled: Boolean(account), autocomplete: 'off' });
-        const name = input('显示名称', { required: true, maxlength: 80, value: account?.displayName || '' });
-        const role = select('系统角色', [{ value: 'member', label: '成员' }, { value: 'admin', label: '系统管理员' }], account?.systemRole || 'member');
-        const password = input('初始密码', { type: 'password', required: !account, minlength: 6, maxlength: 256, autocomplete: 'new-password', hint: '至少 6 位，可以使用纯数字。新账号首次登录必须修改。' });
-        const active = el('input', { type: 'checkbox', checked: account ? Boolean(account.active) : true });
-        if (account?.id === user.id) { role.control.disabled = true; active.disabled = true; }
-        const messages = el('div');
-        const form = el('form', { className: 'stack' }, username.wrapper, name.wrapper, role.wrapper, !account && password.wrapper,
-            account && el('label', { className: 'check-field' }, active, el('span', { text: '允许此账号登录' })),
-            notice('系统管理员可通过独立的只读审计入口查看全局聊天与记忆，日常聊天仍遵循本人的项目与记忆权限。'), messages,
-            el('div', { className: 'actions' }, button('返回账号列表', () => openAccountsPanel(user)), button(account ? '保存账号' : '创建账号', null, { type: 'submit', className: 'button primary' })));
-        const editor = panel(account ? '编辑内部账号' : '创建内部账号', form);
-        form.addEventListener('submit', event => {
-            event.preventDefault();
-            submitting(form, async () => {
-                const body = { displayName: name.control.value.trim(), systemRole: role.control.value };
-                if (account) body.active = active.checked;
-                else { body.username = username.control.value.trim(); body.password = password.control.value; }
-                await api('/api/admin/users' + (account ? '/' + encodeURIComponent(account.id) : ''), { method: account ? 'PATCH' : 'POST', body });
-                password.control.value = ''; editor.close(); openAccountsPanel(user); toast(account ? '账号已更新。' : '内部账号已创建。');
-            }, messages);
-        });
-    }
-    function resetPassword(account) {
-        const password = input('新的临时密码', { type: 'password', required: true, minlength: 6, maxlength: 256, autocomplete: 'new-password', hint: '至少 6 位，可以使用纯数字。重置后已有会话失效，下次登录必须改密。' });
-        const errors = el('div');
-        const form = el('form', { className: 'stack' }, el('p', { text: account.displayName + ' · ' + account.username }), password.wrapper, errors,
-            el('div', { className: 'actions' }, button('返回账号列表', () => openAccountsPanel(user)), button('重置密码', null, { type: 'submit', className: 'button primary' })));
-        const editor = panel('重置账号密码', form);
-        form.addEventListener('submit', event => {
-            event.preventDefault();
-            submitting(form, async () => {
-                await api('/api/admin/users/' + encodeURIComponent(account.id) + '/reset-password', { method: 'POST', body: { password: password.control.value } });
-                password.control.value = ''; editor.close(); openAccountsPanel(user); toast('密码已重置。');
-            }, errors);
-        });
-    }
-    async function load() {
-        try {
-            const data = await api('/api/admin/users');
-            if (!view.dialog.isConnected) return;
-            list.replaceChildren(...(data.users || []).map(account => el('div', { className: 'list-row' },
-                el('span', { className: 'initials', text: (account.displayName || account.username).slice(0, 1) }),
-                el('div', { className: 'flex' }, el('p', { className: 'row-title', text: account.displayName + (account.id === user.id ? '（你）' : '') }), el('p', { className: 'row-subtitle', text: account.username })),
-                badge(account.systemRole === 'admin' ? '系统管理员' : '成员'), !account.active && badge('已停用', 'error'),
-                el('div', { className: 'row-actions' }, button('编辑', () => editAccount(account), { className: 'button small' }), button('重置密码', () => resetPassword(account), { className: 'button small', disabled: account.id === user.id })))));
-        } catch (error) { if (view.dialog.isConnected && error.code !== 'STALE_RESPONSE') list.replaceChildren(notice(error.message, 'error'), button('重新读取', load)); }
-    }
-    load();
-}
+export { openControlPanel as openAccountsPanel } from './control-panel.js';
 
 export function openAuditPanel(initial = {}) {
     let type = initial.type || 'conversations';

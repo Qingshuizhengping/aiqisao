@@ -2,7 +2,6 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import express from 'express';
 import { randomUUID } from 'node:crypto';
-import * as OTPAuth from 'otpauth';
 import { openDatabase } from '../lib/database.js';
 import { createAuth, hashPassword, validatePassword } from '../lib/auth.js';
 import { audit, projectRole, publicUser, requireProjectAdmin } from '../lib/access.js';
@@ -70,18 +69,11 @@ async function fixture(context) {
             get csrf() { return csrf; },
         };
     }
-    async function enroll(person) {
-        const setup = await person.call('POST', '/api/auth/mfa/setup', { password: changedPassword });
-        assert.equal(setup.status, 200);
-        const totp = new OTPAuth.TOTP({ secret: OTPAuth.Secret.fromBase32(setup.body.secret), period: 30, digits: 6 });
-        assert.equal((await person.call('POST', '/api/auth/mfa/confirm', { code: totp.generate() })).status, 200);
-        return { totp, secret: setup.body.secret };
-    }
     async function readyAdmin() {
         const admin = client();
         assert.equal((await admin.call('POST', '/api/auth/login', { username: 'admin', password: initialPassword })).status, 200);
         assert.equal((await admin.call('POST', '/api/auth/password', { currentPassword: initialPassword, newPassword: changedPassword })).status, 200);
-        return { client: admin, ...await enroll(admin) };
+        return { client: admin };
     }
     async function employee(admin, username = 'employee') {
         const created = await admin.call('POST', '/api/admin/users', { username, displayName: username, password: initialPassword });
@@ -91,7 +83,7 @@ async function fixture(context) {
         assert.equal((await person.call('POST', '/api/auth/password', { currentPassword: initialPassword, newPassword: changedPassword })).status, 200);
         return { client: person, user: created.body.user };
     }
-    return { db, auth, config, client, readyAdmin, employee, enroll };
+    return { db, auth, config, client, readyAdmin, employee };
 }
 
 test('bootstrap creates one restricted admin, passwords and session tokens are never stored in plaintext', async context => {
@@ -142,38 +134,60 @@ test('expired, duplicate and logged-out session cookies cannot read authenticate
     assert.equal(setup.db.prepare('SELECT COUNT(*) AS count FROM sessions').get().count, 0);
 });
 
-test('admin password change and verified TOTP enrollment rotate sessions and unlock the workspace', async context => {
+test('admin password change rotates sessions and unlocks the workspace without authenticator enrollment', async context => {
     const setup = await fixture(context);
     const admin = setup.client();
     await admin.call('POST', '/api/auth/login', { username: 'admin', password: initialPassword });
     const oldCookie = admin.cookie;
     await admin.call('POST', '/api/auth/password', { currentPassword: initialPassword, newPassword: changedPassword });
     assert.notEqual(admin.cookie, oldCookie);
-    assert.equal((await admin.call('GET', '/api/workspace')).body.error.code, 'MFA_SETUP_REQUIRED');
-    const enrollment = await admin.call('POST', '/api/auth/mfa/setup', { password: changedPassword });
-    assert.match(enrollment.body.uri, /^otpauth:\/\/totp\//);
-    const pending = setup.db.prepare('SELECT pending_mfa_secret FROM sessions').get().pending_mfa_secret;
-    assert.equal(pending.includes(enrollment.body.secret), false);
-    assert.equal((await admin.call('POST', '/api/auth/mfa/confirm', { code: 'invalid' })).status, 400);
-    assert.equal(setup.db.prepare('SELECT mfa_secret FROM users').get().mfa_secret, null);
-    const totp = new OTPAuth.TOTP({ secret: OTPAuth.Secret.fromBase32(enrollment.body.secret) });
-    const confirmation = await admin.call('POST', '/api/auth/mfa/confirm', { code: totp.generate() });
-    assert.equal(confirmation.status, 200);
-    assert.equal(confirmation.body.user.mfaEnabled, true);
+    assert.equal((await admin.call('GET', '/api/auth/me', undefined, { headers: { Cookie: oldCookie } })).status, 401);
     assert.equal((await admin.call('GET', '/api/workspace')).status, 200);
-    assert.equal(setup.db.prepare('SELECT mfa_secret FROM users').get().mfa_secret.includes(enrollment.body.secret), false);
+    const me = await admin.call('GET', '/api/auth/me');
+    assert.equal(me.body.user.mfaEnabled, false);
+    assert.equal(me.body.user.mfaRequired, false);
+    assert.equal(setup.db.prepare('SELECT mfa_secret FROM users').get().mfa_secret, null);
 });
 
-test('enrolled admin login requires a fresh TOTP and rejects replayed codes', async context => {
+test('legacy enrolled members and both administrator roles authenticate with their password alone', async context => {
     const setup = await fixture(context);
     const ready = await setup.readyAdmin();
-    const other = setup.client();
-    assert.equal((await other.call('POST', '/api/auth/login', { username: 'admin', password: changedPassword })).status, 401);
-    assert.equal((await other.call('POST', '/api/auth/login', { username: 'admin', password: changedPassword, totp: ready.totp.generate() })).status, 401);
-    const fresh = ready.totp.generate({ timestamp: Date.now() + 30000 });
-    assert.equal((await other.call('POST', '/api/auth/login', { username: 'admin', password: changedPassword, totp: fresh })).status, 200);
-    const replay = setup.client();
-    assert.equal((await replay.call('POST', '/api/auth/login', { username: 'admin', password: changedPassword, totp: fresh })).status, 401);
+    const member = await setup.employee(ready.client, 'legacy_member');
+    const manager = await setup.employee(ready.client, 'legacy_project_admin');
+    const project = await manager.client.call('POST', '/api/projects', { name: 'Legacy project' });
+    assert.equal(project.status, 201);
+    for (const username of ['admin', 'legacy_member', 'legacy_project_admin']) {
+        setup.db.prepare('UPDATE users SET mfa_secret=?,mfa_last_step=? WHERE username=?').run('legacy-encrypted-value-not-read', 123, username);
+        const person = setup.client();
+        const login = await person.call('POST', '/api/auth/login', { username, password: changedPassword });
+        assert.equal(login.status, 200);
+        assert.equal(login.body.user.mfaEnabled, false);
+        assert.equal(login.body.user.mfaRequired, false);
+        assert.equal((await person.call('GET', '/api/workspace')).status, 200);
+        assert.equal((await setup.client().call('POST', '/api/auth/login', { username, password: 'incorrect-password' })).status, 401);
+        assert.equal(setup.db.prepare('SELECT mfa_secret FROM users WHERE username=?').get(username).mfa_secret, 'legacy-encrypted-value-not-read');
+    }
+    assert.equal((await member.client.call('GET', '/api/admin/users')).status, 403);
+    assert.equal((await manager.client.call('PATCH', '/api/projects/' + project.body.project.id, { name: 'Password-only administrator' })).status, 200);
+});
+
+test('retired authenticator setup endpoints cannot enroll or expose secrets', async context => {
+    const setup = await fixture(context);
+    const ready = await setup.readyAdmin();
+    const person = await setup.employee(ready.client, 'retired_mfa_member');
+    for (const client of [ready.client, person.client]) {
+        for (const route of ['/api/auth/mfa/setup', '/api/auth/mfa/confirm']) {
+            const result = await client.call('POST', route, route.endsWith('setup') ? { password: changedPassword } : { code: '123456' });
+            assert.equal(result.status, 410);
+            assert.equal(result.body.error.code, 'MFA_RETIRED');
+            assert.equal(result.body.secret, undefined);
+            assert.equal(result.body.uri, undefined);
+        }
+        assert.equal((await client.call('POST', '/api/auth/mfa/setup', { password: changedPassword }, { headers: { 'X-CSRF-Token': '' } })).status, 403);
+    }
+    assert.equal((await setup.client().call('POST', '/api/auth/mfa/setup', { password: changedPassword })).status, 401);
+    assert.equal(setup.db.prepare('SELECT COUNT(*) AS count FROM users WHERE mfa_secret IS NOT NULL').get().count, 0);
+    assert.equal(setup.db.prepare('SELECT COUNT(*) AS count FROM sessions WHERE pending_mfa_secret IS NOT NULL').get().count, 0);
 });
 
 test('unknown users and wrong passwords share generic errors and login attempts are bounded', async context => {
@@ -202,7 +216,7 @@ test('employee account setup requires a changed password and does not grant admi
     await alice.call('POST', '/api/auth/password', { currentPassword: initialPassword, newPassword: changedPassword });
     assert.equal((await alice.call('GET', '/api/workspace')).status, 200);
     assert.equal((await alice.call('GET', '/api/admin/users')).status, 403);
-    assert.equal((await alice.call('POST', '/api/auth/mfa/setup', { password: changedPassword })).status, 403);
+    assert.equal((await alice.call('POST', '/api/auth/mfa/setup', { password: changedPassword })).status, 410);
     assert.equal((await alice.call('PATCH', '/api/auth/preferences', { autoMemoryEnabled: false })).body.user.autoMemoryEnabled, false);
     assert.equal((await alice.call('PATCH', '/api/auth/preferences', { systemRole: 'admin' })).status, 400);
 });
@@ -216,9 +230,8 @@ test('project admins manage only their own memberships and system audit role is 
     assert.equal(created.status, 201);
     const project = created.body.project;
     assert.equal(project.role, 'admin');
-    assert.equal((await alice.client.call('GET', '/api/auth/me')).body.user.mfaRequired, true);
-    assert.equal((await alice.client.call('GET', '/api/projects')).body.error.code, 'MFA_SETUP_REQUIRED');
-    await setup.enroll(alice.client);
+    assert.equal((await alice.client.call('GET', '/api/auth/me')).body.user.mfaRequired, false);
+    assert.equal((await alice.client.call('GET', '/api/projects')).status, 200);
     assert.equal((await admin.client.call('GET', '/api/projects')).body.projects.length, 0);
     assert.equal((await admin.client.call('PATCH', '/api/projects/' + project.id, { name: 'No' })).status, 403);
     assert.equal((await bob.client.call('GET', '/api/projects/' + project.id + '/members')).status, 403);
@@ -227,8 +240,8 @@ test('project admins manage only their own memberships and system audit role is 
     assert.equal((await bob.client.call('PATCH', '/api/projects/' + project.id, { name: 'No' })).status, 403);
     assert.equal((await alice.client.call('PUT', '/api/projects/' + project.id + '/members/' + alice.user.id, { role: 'member' })).body.error.code, 'LAST_PROJECT_ADMIN');
     assert.equal((await alice.client.call('PUT', '/api/projects/' + project.id + '/members/' + bob.user.id, { role: 'admin' })).status, 200);
-    assert.equal((await bob.client.call('GET', '/api/projects')).body.error.code, 'MFA_SETUP_REQUIRED');
-    await setup.enroll(bob.client);
+    assert.equal((await bob.client.call('GET', '/api/projects')).status, 200);
+    assert.equal((await bob.client.call('PATCH', '/api/projects/' + project.id, { name: 'Password-only project admin' })).status, 200);
     assert.equal((await alice.client.call('PUT', '/api/projects/' + project.id + '/members/' + alice.user.id, { role: 'member' })).status, 200);
     assert.equal((await alice.client.call('PATCH', '/api/projects/' + project.id, { name: 'No' })).status, 403);
     assert.equal((await bob.client.call('DELETE', '/api/projects/' + project.id + '/members/' + alice.user.id)).status, 200);
@@ -255,7 +268,6 @@ test('account disable and role changes revoke sessions immediately and cannot re
     const admin = await setup.readyAdmin();
     const alice = await setup.employee(admin.client, 'alice');
     const project = await alice.client.call('POST', '/api/projects', { name: 'Continuity protected' });
-    await setup.enroll(alice.client);
     assert.equal((await admin.client.call('PATCH', '/api/admin/users/' + alice.user.id, { active: false })).body.error.code, 'LAST_PROJECT_ADMIN');
     await alice.client.call('PATCH', '/api/projects/' + project.body.project.id, { archived: true });
     assert.equal((await admin.client.call('PATCH', '/api/admin/users/' + alice.user.id, { active: false })).status, 200);
@@ -269,7 +281,8 @@ test('account disable and role changes revoke sessions immediately and cannot re
     assert.equal((await admin.client.call('PATCH', '/api/admin/users/' + bob.user.id, { systemRole: 'admin' })).status, 200);
     assert.equal((await bob.client.call('GET', '/api/auth/me')).status, 401);
     await bob.client.call('POST', '/api/auth/login', { username: 'bobby', password: changedPassword });
-    assert.equal((await bob.client.call('GET', '/api/workspace')).body.error.code, 'MFA_SETUP_REQUIRED');
+    assert.equal((await bob.client.call('GET', '/api/workspace')).status, 200);
+    assert.equal((await bob.client.call('GET', '/api/admin/users')).status, 200);
 });
 
 test('password reset invalidates every employee session and requires a new password before workspace access', async context => {
@@ -386,8 +399,6 @@ test('audit details exclude secrets and project access checks re-read current ac
     setup.db.prepare('INSERT INTO project_members(project_id,user_id,role,created_at) VALUES(?,?,?,?)').run(projectId, actor.id, 'admin', time);
     assert.throws(() => requireProjectAdmin(setup.db, actor, projectId), error => error.code === 'PASSWORD_CHANGE_REQUIRED');
     setup.db.prepare('UPDATE users SET must_change_password=0 WHERE id=?').run(actor.id);
-    assert.throws(() => requireProjectAdmin(setup.db, actor, projectId), error => error.code === 'MFA_SETUP_REQUIRED');
-    setup.db.prepare("UPDATE users SET mfa_secret='fixture-enrolled' WHERE id=?").run(actor.id);
     assert.equal(requireProjectAdmin(setup.db, actor, projectId), 'admin');
     setup.db.prepare('UPDATE users SET active=0 WHERE id=?').run(actor.id);
     assert.equal(projectRole(setup.db, actor, projectId), null);
@@ -412,6 +423,10 @@ test('six-digit numeric passwords work for account creation, first setup, ordina
     assert.equal(firstChange.body.user.mustChangePassword, false);
     assert.equal(firstChange.body.user.passwordHash, undefined);
     assert.equal((await person.call('GET', '/api/workspace')).status, 200);
+    const numericProject = await person.call('POST', '/api/projects', { name: 'Numeric password project administrator' });
+    assert.equal(numericProject.status, 201);
+    assert.equal(numericProject.body.project.role, 'admin');
+    assert.equal((await person.call('GET', '/api/projects/' + numericProject.body.project.id + '/members')).status, 200);
     const another = setup.client();
     assert.equal((await another.call('POST', '/api/auth/login', { username: 'numeric_member', password: '654321' })).status, 200);
     assert.equal((await person.call('POST', '/api/auth/password', { currentPassword: '654321', newPassword: '112233' })).status, 200);
@@ -453,7 +468,7 @@ test('five-character passwords are rejected by creation, change and reset APIs w
     assert.equal(setup.db.prepare('SELECT must_change_password FROM users WHERE id=?').get(id).must_change_password, 1);
 });
 
-test('numeric administrator passwords still require first-login change and verified TOTP', async context => {
+test('numeric administrator passwords retain first-login protection and need no TOTP to administer accounts', async context => {
     const setup = await fixture(context);
     const admin = await setup.readyAdmin();
     const created = await admin.client.call('POST', '/api/admin/users', { username: 'numeric_admin', displayName: 'Numeric Admin', systemRole: 'admin', password: '123456' });
@@ -462,13 +477,10 @@ test('numeric administrator passwords still require first-login change and verif
     assert.equal((await person.call('POST', '/api/auth/login', { username: 'numeric_admin', password: '123456' })).status, 200);
     assert.equal((await person.call('GET', '/api/workspace')).body.error.code, 'PASSWORD_CHANGE_REQUIRED');
     assert.equal((await person.call('POST', '/api/auth/password', { currentPassword: '123456', newPassword: '654321' })).status, 200);
-    assert.equal((await person.call('GET', '/api/workspace')).body.error.code, 'MFA_SETUP_REQUIRED');
-    const enrollment = await person.call('POST', '/api/auth/mfa/setup', { password: '654321' });
-    assert.equal(enrollment.status, 200);
-    const totp = new OTPAuth.TOTP({ secret: OTPAuth.Secret.fromBase32(enrollment.body.secret) });
-    assert.equal((await person.call('POST', '/api/auth/mfa/confirm', { code: totp.generate() })).status, 200);
     assert.equal((await person.call('GET', '/api/workspace')).status, 200);
+    assert.equal((await person.call('GET', '/api/admin/users')).status, 200);
     const other = setup.client();
-    assert.equal((await other.call('POST', '/api/auth/login', { username: 'numeric_admin', password: '654321' })).status, 401);
-    assert.equal((await other.call('POST', '/api/auth/login', { username: 'numeric_admin', password: '654321', totp: totp.generate({ timestamp: Date.now() + 30000 }) })).status, 200);
+    assert.equal((await other.call('POST', '/api/auth/login', { username: 'numeric_admin', password: '654321' })).status, 200);
+    assert.equal((await other.call('GET', '/api/admin/users')).status, 200);
+    assert.equal(setup.db.prepare('SELECT mfa_secret FROM users WHERE id=?').get(created.body.user.id).mfa_secret, null);
 });

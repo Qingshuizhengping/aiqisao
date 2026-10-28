@@ -6,7 +6,7 @@ Implement the accepted internal assistant plan for 2–30 employees at https://8
 
 System admins can read all conversations and all memories through dedicated read-only audit endpoints. Project admins can read every conversation in their administered project and review project memory candidates, but cannot directly read others' private memory libraries. Ordinary users can read their own conversations and private memories plus active shared memories in projects they belong to. Neither audit role expands normal chat context. All access decisions use current database roles, not client-supplied claims.
 
-Use Express 4, better-sqlite3, Node 24 LTS, ESM, opaque server-side sessions, scrypt passwords, encrypted TOTP secrets, Secure/HttpOnly host-only cookies and Origin plus authenticated CSRF checks. API JSON responses use camelCase. Timestamps are milliseconds. SQLite columns use snake_case. Errors are `{error:{code,message}}`, with safe user-facing messages. No real provider calls in automated tests.
+Use Express 4, better-sqlite3, Node 24 LTS, ESM, opaque server-side sessions, scrypt password-only login, Secure/HttpOnly host-only cookies and Origin plus authenticated CSRF checks. API JSON responses use camelCase. Timestamps are milliseconds. SQLite columns use snake_case. Errors are `{error:{code,message}}`, with safe user-facing messages. No real provider calls in automated tests.
 
 ## Shared modules
 
@@ -36,17 +36,21 @@ All ids are UUIDs. Defaults: active=1, must_change_password=0, auto_memory_enabl
 
 ## Authentication API (router mounted at /api/auth)
 
-- POST `/login` `{username,password,totp?}` -> `{user,csrfToken}` plus session cookie. Enrolled admins must supply TOTP. Non-enrolled initial admin gets restricted session until password change and MFA setup.
+- POST `/login` `{username,password}` -> `{user,csrfToken}` plus session cookie. All roles use passwords only, including accounts with legacy TOTP bindings. Initial accounts get restricted sessions until their first password change.
 - GET `/me` -> `{user,csrfToken}` or 401.
 - POST `/logout` -> `{ok:true}` and expires cookie.
 - POST `/password` `{currentPassword,newPassword}` -> `{user,csrfToken}`; invalidates other sessions and rotates the current session.
-- POST `/mfa/setup` `{password}` -> `{secret,uri}`; pending enrollment only. Do not use external QR services.
-- POST `/mfa/confirm` `{code}` -> `{user,csrfToken}`. Only successfully verified setup becomes active.
+- POST `/mfa/setup` and `/mfa/confirm` are retired compatibility endpoints and return `410 MFA_RETIRED` after normal authentication and CSRF checks. They never expose or update legacy secrets.
 - PATCH `/preferences` `{autoMemoryEnabled}` -> `{user}`.
 
-`requireReadyUser` blocks workspace APIs with `PASSWORD_CHANGE_REQUIRED` or `MFA_SETUP_REQUIRED` until satisfied. Auth/me/password/MFA/logout remain usable. Admin routes require system role and completed MFA.
+`requireReadyUser` blocks workspace APIs with `PASSWORD_CHANGE_REQUIRED` until satisfied. Auth/me/password/logout remain usable. Admin routes require the current active system administrator role. Legacy MFA setup/confirm endpoints return 410 after authentication and CSRF validation.
 
 ## Project and admin APIs
+
+- GET `/api/admin/control-panel` -> `{summary,users,projects,hasMore,limit,offset}`; current system administrators only. Supports bounded `q`, `systemRole`, `status` and pagination filters.
+- DELETE `/api/admin/users/:id` soft-deletes and disables an account, revokes every session and preserves historical data. POST `.../:id/restore` restores it as disabled; explicit enabling is required.
+- GET `/api/admin/users/:id/projects` lists all project memberships for access administration. PUT/DELETE `.../:id/projects/:projectId` assigns or revokes project roles without automatically joining the acting system administrator.
+- Self-administration protections, the last active system administrator and the final active administrator of each live project are enforced transactionally. Archived project membership is read-only. Deleted accounts cannot be enabled or modified through ordinary update routes.
 
 - GET `/api/projects` -> `{projects}`; only active memberships, including archived projects.
 - POST `/api/projects` `{name,description?,instructions?}` -> `{project}`; creator is project admin.
@@ -80,10 +84,10 @@ All ids are UUIDs. Defaults: active=1, must_change_password=0, auto_memory_enabl
 
 The uploaded-document library follows the same personal/project-private/project-shared scopes and uses dedicated read-only global file audit routes. Shared file candidates require project administrator approval. See KNOWLEDGE.md for parser limits, durable processing, retrieval revalidation, preview and download routes.
 
-Left: brand, own chats, project selector/list. Center: safe streamed Markdown conversation, mobile-safe composer, explicit project/admin visibility notice. Memory library with scope selector/editor/candidate review and per-answer memory references. Project details/membership management. User preferences, password and TOTP onboarding. System-only account management and global audit view; project admin can open readonly member chats. Audit UI must not offer compose/edit controls for others.
+Left: brand, own chats, project selector/list. Center: safe streamed Markdown conversation, mobile-safe composer, explicit project/admin visibility notice. Memory library with scope selector/editor/candidate review and per-answer memory references. Project details/membership management. User preferences and first-login password setup. System-only account management and global audit view; project admin can open readonly member chats. Audit UI must not offer compose/edit controls for others.
 
 Never persist raw conversations/memories in localStorage or Service Worker. Drafts are user+conversation bound sessionStorage, cleared on logout/account switch. Theme is safe local preference. PWA shell cache prefix must be internal-specific; API is network-only. All dialogs must fit 390px and use 16px inputs, 44px touch targets, safe-area/visualViewport keyboard handling.
 
 ## Completion evidence
 
-Automated tests for every role boundary/revocation, admin readonly audit, authentication/MFA/CSRF, idempotent durable generation/stop/reload, scoped semantic retrieval, extraction conflicts and deleted memory not resurrecting, disabled memory, source access and private browser storage. Browser validate desktop/390px flows and no console errors. Actual Node24 Linux staging tests, database restore drill, TLS/domain checks, provider smoke using non-sensitive synthetic data. DNS points internal.weizhiyu.top to 8.134.141.217; the user confirmed ICP filing and Alibaba access completion on 2026-10-27. Do not substitute UI-only stubs for working APIs.
+Automated tests for every role boundary/revocation, admin readonly audit, password authentication/CSRF, idempotent durable generation/stop/reload, scoped semantic retrieval, extraction conflicts and deleted memory not resurrecting, disabled memory, source access and private browser storage. Browser validate desktop/390px flows and no console errors. Actual Node24 Linux staging tests, database restore drill, TLS/domain checks, provider smoke using non-sensitive synthetic data. DNS points internal.weizhiyu.top to 8.134.141.217; the user confirmed ICP filing and Alibaba access completion on 2026-10-27. Do not substitute UI-only stubs for working APIs.

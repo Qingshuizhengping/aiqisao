@@ -32,8 +32,8 @@ export async function fixture(context, options = {}) {
     function employee(name, role = 'member') {
         const id = randomUUID();
         const now = Date.now();
-        db.prepare(`INSERT INTO users(id,username,display_name,password_hash,system_role,mfa_secret,created_at,updated_at)
-            VALUES(?,?,?,?,?,?,?,?)`).run(id, name, name, 'unused-test-password', role, role === 'admin' ? 'test-enrolled' : null, now, now);
+        db.prepare(`INSERT INTO users(id,username,display_name,password_hash,system_role,created_at,updated_at)
+            VALUES(?,?,?,?,?,?,?)`).run(id, name, name, 'unused-test-password', role, now, now);
         const token = randomBytes(32).toString('base64url');
         const csrf = randomBytes(24).toString('base64url');
         db.prepare('INSERT INTO sessions(id,user_id,csrf_token,created_at,expires_at) VALUES(?,?,?,?,?)')

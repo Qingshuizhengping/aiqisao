@@ -1,8 +1,9 @@
 import { api, setSession, getSession, onUnauthorized, onSetupRequired, query } from './api.js';
-import { loginScreen, passwordScreen, mfaScreen, accountPanel } from './account.js';
+import { loginScreen, passwordScreen, accountPanel } from './account.js';
 import { createProjectPanel, openProjectPanel } from './projects.js';
 import { openMemoryPanel } from './memories.js';
-import { openAccountsPanel, openAuditPanel } from './admin.js';
+import { openAuditPanel } from './admin.js';
+import { openControlPanel } from './control-panel.js';
 import { createChatView, clearDrafts, activateDraftOwner, followRun } from './chat.js';
 import { el, button, icon, input, panel, closePanel, notice, empty, badge, submitting, confirmAction, toast } from './ui.js';
 
@@ -82,10 +83,10 @@ async function acceptSession(data) {
     activateDraftOwner(data.user.id);
     setSession(data); user = data.user;
     if (user.mustChangePassword) { host.replaceChildren(passwordScreen(user, acceptSession, logout)); return; }
-    if ((user.mfaRequired || user.systemRole === 'admin') && !user.mfaEnabled) { host.replaceChildren(mfaScreen(acceptSession, logout)); return; }
     buildShell();
     await refreshProjects();
     if (user) await selectProject(null);
+    if (user && /^\/admin\/?$/.test(location.pathname)) controlPanel();
 }
 
 async function logout() {
@@ -101,9 +102,36 @@ function account() {
         if (current) setSession({ ...current, user: value });
         accountName.textContent = value.displayName;
         chat?.setUser(value);
-        if ((value.mfaRequired || value.systemRole === 'admin') && !value.mfaEnabled) acceptSession(getSession());
-        else if (conversation) selectConversation(conversation.id);
+        if (conversation) selectConversation(conversation.id);
     } });
+}
+
+function controlPanel() {
+    closeSidebar();
+    if (user?.systemRole !== 'admin') {
+        history.replaceState(null, '', '/');
+        toast('控制面板仅对系统管理员开放。', 'error');
+        return;
+    }
+    history.replaceState(null, '', '/admin');
+    openControlPanel(user, {
+        onClose() { if (/^\/admin\/?$/.test(location.pathname)) history.replaceState(null, '', '/'); },
+        onAudit: () => openAuditPanel(),
+        onChanged: async () => {
+            const previousProject = project?.id;
+            const session = await api('/api/auth/me');
+            user = session.user; setSession(session);
+            accountName.textContent = user.displayName;
+            chat?.setUser(user);
+            await refreshProjects();
+            if (previousProject && !projects.some(item => item.id === previousProject)) await selectProject(null);
+            else if (previousProject) {
+                const updated = projects.find(item => item.id === previousProject);
+                if (updated?.role !== project?.role) await selectProject(updated);
+                else { project = updated; updateHeading(); }
+            }
+        },
+    });
 }
 
 function openMemories(memory) {
@@ -133,7 +161,7 @@ function buildShell() {
         el('nav', { className: 'sidebar-nav' }, button('个人空间', () => selectProject(null), { className: 'nav-item personal-space', glyph: 'chat' }), button('记忆库', () => openMemories(), { className: 'nav-item', glyph: 'memory' })),
         el('section', { className: 'sidebar-section' }, el('div', { className: 'section-label row-between' }, el('span', { text: '项目空间' }), button('', () => createProjectPanel(async value => { await refreshProjects(); await selectProject(projects.find(item => item.id === value.id) || value); }), { className: 'icon-button small', glyph: 'plus', name: '创建项目空间' })), projectList),
         el('section', { className: 'sidebar-section grow' }, el('div', { className: 'section-label', text: '最近讨论' }), conversationList),
-        el('footer', { className: 'sidebar-footer' }, user.systemRole === 'admin' && el('div', { className: 'sidebar-nav' }, button('内部账号', () => openAccountsPanel(user), { className: 'nav-item', glyph: 'user' }), button('全局只读审计', () => openAuditPanel(), { className: 'nav-item', glyph: 'shield' })),
+            el('footer', { className: 'sidebar-footer' }, user.systemRole === 'admin' && el('div', { className: 'sidebar-nav' }, button('控制面板', controlPanel, { className: 'nav-item', glyph: 'settings' }), button('全局只读审计', () => openAuditPanel(), { className: 'nav-item', glyph: 'shield' })),
             el('button', { className: 'account-button', type: 'button', onclick: account }, el('span', { className: 'initials', text: user.displayName.slice(0, 1) }), el('div', { className: 'account-meta' }, accountName, accountRole), icon('settings', 17))));
     title = el('h1', { className: 'header-title', text: '个人空间' });
     subtitle = el('div', { className: 'header-subtitle' });

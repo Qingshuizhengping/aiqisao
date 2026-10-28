@@ -9,9 +9,9 @@
 - 新建无交互登录的专用服务用户 `wzy-internal`；示例代码位于 `/opt/ai-qisao-internal/current`，持久数据 `/var/lib/ai-qisao-internal`，本地备份 `/var/backups/ai-qisao-internal`。数据与备份目录由该用户拥有且为 `0700`。代码由部署用户拥有，服务用户只读代码；`.env` 对服务用户只读且权限 `0600`，不要进入 Git 或 Web 静态目录。
 - 安全组及系统防火墙仅开放需要的 SSH、HTTP/HTTPS 和员工版 HTTPS 6069；3001 不对公网开放。模型供应商凭据仅放独立环境配置，按内部版单独配额。不要把公网应用密钥、数据库或会话迁入内部版。
 
-从 `internal/.env.example` 创建 `.env`。`INTERNAL_DATA_DIRECTORY`、`INTERNAL_BACKUP_DIRECTORY`、`BACKUP_EXPORT_DIRECTORY` 的相对路径均以 `internal/` 为基准。建议使用上述独立绝对路径。`INTERNAL_ENCRYPTION_KEY` 和 `BACKUP_ENCRYPTION_KEY` 必须是分别生成的 32 字节标准 base64 值，不要复用；可在受限终端使用 `node -e "process.stdout.write(require('node:crypto').randomBytes(32).toString('base64'))"` 生成，再存入受限环境文件与独立密码库。环境文件、内部 TOTP 加密密钥和备份解密密钥也需要独立安全备份；只有 SQLite 文件无法恢复已加密的管理员 TOTP。
+从 `internal/.env.example` 创建 `.env`。`INTERNAL_DATA_DIRECTORY`、`INTERNAL_BACKUP_DIRECTORY`、`BACKUP_EXPORT_DIRECTORY` 的相对路径均以 `internal/` 为基准。建议使用上述独立绝对路径。`INTERNAL_ENCRYPTION_KEY` 和 `BACKUP_ENCRYPTION_KEY` 必须是分别生成的 32 字节标准 base64 值，不要复用；可在受限终端使用 `node -e "process.stdout.write(require('node:crypto').randomBytes(32).toString('base64'))"` 生成，再存入受限环境文件与独立密码库。环境文件、历史加密配置和备份解密密钥也需要独立安全备份。历史 TOTP 字段保留以兼容旧快照，当前登录不再使用它们。
 
-初次启动仅在用户表为空时创建初始管理员。初始密码至少 6 字符，允许纯数字，首次登录必须改密并验证 TOTP；项目管理员同样必须完成 TOTP。启用后再验证账号停用、项目移除、管理员只读审计和普通成员边界。用户表非空时变更初始配置不会重置任何账号。
+初次启动仅在用户表为空时创建初始管理员。初始密码至少 6 字符，允许纯数字，首次登录必须改密。所有角色仅使用账号和密码登录，历史 TOTP 绑定已退出验证流程。启用后再验证账号停用、删除与恢复、项目移除、管理员只读审计和普通成员边界。用户表非空时变更初始配置不会重置任何账号。
 
 在 `internal/` 执行：
 
@@ -82,7 +82,7 @@ server {
 }
 ```
 
-先做 Nginx 配置检查，再 reload。`NODE_ENV=production`，`INTERNAL_ORIGIN=https://8.134.141.217:6069` 必须精确包含端口；不要为方便调试放宽 Origin/CSRF 或关闭 Secure Cookie。原 80/443 站点和 IP 证书挑战路径继续沿用现有配置。确认服务器时间同步，否则 TOTP 会失败。专用 IP 证书续期 timer 与部署钩子须正常，钩子应先 `nginx -t` 再 reload；浏览器成功访问不代表自动续期已配置。短期 IP 证书需要持续续期，不能忽略到期监控。旧 HTTP SSH 隧道只供运维检查，员工登录使用 HTTPS 6069。
+先做 Nginx 配置检查，再 reload。`NODE_ENV=production`，`INTERNAL_ORIGIN=https://8.134.141.217:6069` 必须精确包含端口；不要为方便调试放宽 Origin/CSRF 或关闭 Secure Cookie。原 80/443 站点和 IP 证书挑战路径继续沿用现有配置。确认服务器时间同步，以正确校验会话有效期和备份时间。专用 IP 证书续期 timer 与部署钩子须正常，钩子应先 `nginx -t` 再 reload；浏览器成功访问不代表自动续期已配置。短期 IP 证书需要持续续期，不能忽略到期监控。旧 HTTP SSH 隧道只供运维检查，员工登录使用 HTTPS 6069。
 
 ## 在线备份与离机导出
 
@@ -122,7 +122,7 @@ node scripts/restore-check.mjs --input /path/to/internal-TIMESTAMP-UUID.sqlite -
 1. 停止内部助手及备份调度，保留当前整个数据目录的只读事故副本，包含 WAL/SHM；不要仅移动 `.sqlite` 后继续运行。
 2. 在独立私有目录用 `restore-check --keep` 校验选定快照，确认时间、原始聊天/审计记录的行数、项目和记忆范围。保留与该快照匹配的 `INTERNAL_ENCRYPTION_KEY`。
 3. 使用匹配版本的代码，在停机状态把恢复后的 SQLite 安装到新的数据目录，设定专用用户所有权和 `0600` 权限。不要让旧 WAL/SHM 与恢复库混用。将服务的数据路径切换至该新目录，保留原目录以便回退。
-4. 启动前撤销恢复库全部旧会话：对恢复后的库执行 `DELETE FROM sessions`。重新登录并用原管理员 TOTP 验证；如果主加密密钥丢失，不能声称管理员身份可恢复，应启动组织规定的离线身份恢复流程。
+4. 启动前撤销恢复库全部旧会话：对恢复后的库执行 `DELETE FROM sessions`。使用管理员原有密码重新登录；历史 TOTP 字段仅为旧数据兼容保留，不再要求验证码。若密码无法验证，应启动组织规定的账号恢复流程。
 5. 启动服务并检查健康状态。原有未完成任务由启动恢复逻辑标为中断，不自动重新生成或重复计费。核实普通成员、项目管理员、系统审计、删除记录和私有记忆隔离，再恢复入口与备份调度。实际演练记录日期、输入快照、校验结果、耗时和恢复点，不记录正文或密钥。
 
 ## 升级与回滚
@@ -133,6 +133,6 @@ node scripts/restore-check.mjs --input /path/to/internal-TIMESTAMP-UUID.sqlite -
 
 发布使用版本化只读目录和 `current` 指针；数据及备份不在发布目录内。升级前运行测试/构建，执行并校验一次备份，保留旧代码版本及其运行配置。先在相同 Node24 Linux 环境的隔离实例验证，使用合成账号和独立端口/目录；不得把生产数据库交给公网应用或让测试请求发送真实内部内容到供应商。
 
-先停止服务，再切换代码并启动；检查 `/api/health`、HTTPS、Cookie、TOTP、SSE、后台任务与角色边界。回滚只可在旧代码兼容当前 schema 时切回旧版本；存在不兼容数据变更时按恢复流程选择升级前快照，明确会失去快照后的写入。不要在服务运行时覆盖数据库或任意删除 WAL。确认新版本稳定且备份可恢复后，再按保留策略清理旧发布目录。
+先停止服务，再切换代码并启动；检查 `/api/health`、HTTPS、Cookie、密码登录、控制面板、SSE、后台任务与角色边界。回滚只可在旧代码兼容当前 schema 时切回旧版本；存在不兼容数据变更时按恢复流程选择升级前快照，明确会失去快照后的写入。不要在服务运行时覆盖数据库或任意删除 WAL。确认新版本稳定且备份可恢复后，再按保留策略清理旧发布目录。
 
 本地自动化测试只能证明代码路径；生产上线还须留存实际 Linux 测试、离机取回恢复、TLS/续期检查及单次合成模型调用结果。尚未执行的验证必须明确标为未完成。

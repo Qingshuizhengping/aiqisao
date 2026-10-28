@@ -58,7 +58,6 @@ function actor(setup, person) {
 function project(setup, manager, members) {
     const id = randomUUID();
     const now = Date.now();
-    setup.db.prepare('UPDATE users SET mfa_secret=? WHERE id=?').run('fixture-enrolled', manager.id);
     setup.db.prepare('INSERT INTO projects(id,name,created_by,created_at,updated_at) VALUES(?,?,?,?,?)')
         .run(id, 'Knowledge project', manager.id, now, now);
     for (const person of [manager, ...members]) setup.db.prepare('INSERT INTO project_members(project_id,user_id,role,created_at) VALUES(?,?,?,?)')

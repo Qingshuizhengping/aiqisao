@@ -45,7 +45,7 @@ async function request(path, { method = 'GET', body, signal, binary = false, dow
     if (!response.ok) {
         const failure = new ApiError(data?.error?.message || '请求暂时未完成。', data?.error?.code || 'REQUEST_FAILED', response.status);
         if (response.status === 401 && session && path !== '/api/auth/login') unauthorized(failure);
-        if (['PASSWORD_CHANGE_REQUIRED', 'MFA_SETUP_REQUIRED'].includes(failure.code)) setupRequired(failure);
+        if (failure.code === 'PASSWORD_CHANGE_REQUIRED') setupRequired(failure);
         throw failure;
     }
     return data;

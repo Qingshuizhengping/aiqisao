@@ -14,7 +14,7 @@ import { createChatService } from './lib/chat.js';
 import { createProvider } from './lib/provider.js';
 import { AppError } from './lib/errors.js';
 
-export const VERSION = 'internal-v20261028-5';
+export const VERSION = 'internal-v20261028-6';
 
 export function createApplication({ config, database, provider: suppliedProvider } = {}) {
     config ||= createConfig();
@@ -66,7 +66,7 @@ export function createApplication({ config, database, provider: suppliedProvider
             if (path.basename(filename) === 'sw.js') response.setHeader('Service-Worker-Allowed', '/');
         },
     }));
-    app.get(['/', '/login'], (request, response) => {
+    app.get(['/', '/login', '/admin'], (request, response) => {
         const index = path.join(publicDirectory, 'index.html');
         if (!fs.existsSync(index)) return response.status(503).type('text/plain').send('请先执行 npm run build。');
         response.set('Cache-Control', 'no-cache').sendFile(index);

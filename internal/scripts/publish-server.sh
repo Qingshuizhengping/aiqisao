@@ -46,6 +46,7 @@ cd "$next/internal"
 runuser -u qisao-internal -- env PATH="$PATH" npm ci --cache "$base/npm-cache" --no-audit --no-fund
 runuser -u qisao-internal -- env PATH="$PATH" npm test
 runuser -u qisao-internal -- env PATH="$PATH" npm run build
+expected_version=$(node --input-type=module -e "import { VERSION } from './server.js'; process.stdout.write(VERSION)")
 printf '%s\n' "$revision" > "$next/revision"
 chown -hR root:qisao-internal "$next"
 chmod -R g+rX,o-rwx "$next"
@@ -140,7 +141,7 @@ mv -Tf "$base/current.next-$$" "$base/current"
 env NODE_ENV=production INTERNAL_ORIGIN="$origin" INTERNAL_HOST=127.0.0.1 INTERNAL_PORT=3001 pm2 restart ai-qisao-internal --update-env >/dev/null
 healthy=0
 for attempt in $(seq 1 25); do
-    if curl -fsS http://127.0.0.1:3001/api/health 2>/dev/null | grep -q 'internal-v20261028-5'; then healthy=1; break; fi
+    if curl -fsS http://127.0.0.1:3001/api/health 2>/dev/null | grep -Fq "\"version\":\"$expected_version\""; then healthy=1; break; fi
     sleep 1
 done
 test "$healthy" = 1

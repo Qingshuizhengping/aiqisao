@@ -32,9 +32,8 @@ async function fixture(context, { extract, embed, filePath = ':memory:' } = {}) 
     const users = {};
     for (const username of ['alice', 'bob', 'manager', 'outsider', 'system']) {
         const id = randomUUID();
-        db.prepare(`INSERT INTO users(id,username,display_name,password_hash,system_role,mfa_secret,created_at,updated_at)
-            VALUES(?,?,?,?,?,?,?,?)`).run(id, username, username, 'fixture-only', username === 'system' ? 'admin' : 'member',
-                ['manager', 'outsider', 'system'].includes(username) ? 'fixture-enrolled' : null, Date.now(), Date.now());
+        db.prepare(`INSERT INTO users(id,username,display_name,password_hash,system_role,created_at,updated_at)
+            VALUES(?,?,?,?,?,?,?)`).run(id, username, username, 'fixture-only', username === 'system' ? 'admin' : 'member', Date.now(), Date.now());
         users[username] = publicUser(db.prepare('SELECT * FROM users WHERE id=?').get(id), db);
     }
     const projectId = randomUUID();
@@ -383,21 +382,24 @@ test('automatic-memory switches stop extraction while existing active memory rem
     assert.equal(page.calls.extract.length, 0);
 });
 
-test('new project administrator MFA requirements apply to stale actors, retrieval and queued extraction', async context => {
+test('role changes invalidate queued extraction controls without blocking password-only project administrators', async context => {
     const page = await fixture(context);
     const memory = insertMemory(page.db, { scope: 'personal', userId: page.users.alice.id, content: '喜欢简洁的表达', status: 'active' });
-    const source = page.turn();
+    const source = page.turn({ project: page.projectId });
     const job = page.service.enqueueTurn(source);
     page.db.prepare("UPDATE project_members SET role='admin' WHERE project_id=? AND user_id=?").run(page.projectId, page.users.alice.id);
-    await assert.rejects(page.service.retrieve({ user: page.users.alice, query: '简洁' }), error => error.code === 'MFA_SETUP_REQUIRED');
-    assert.equal((await page.request('alice', '/memories')).status, 428);
-    assert.equal(page.service.enqueueTurn(page.turn()), null);
+    const result = await page.service.retrieve({ user: page.users.alice, projectId: page.projectId, query: '简洁' });
+    assert.equal(result.memories[0].id, memory.id);
+    assert.equal((await page.request('alice', '/memories')).status, 200);
     await page.flush();
     assert.equal(page.calls.extract.length, 0);
     assert.equal(page.db.prepare('SELECT state FROM memory_jobs WHERE id=?').get(job.id).state, 'skipped');
     assert.equal(page.db.prepare('SELECT status FROM memories WHERE id=?').get(memory.id).status, 'active');
-    page.db.prepare('UPDATE users SET mfa_secret=? WHERE id=?').run('fixture-enrolled', page.users.alice.id);
-    assert.equal((await page.request('alice', '/memories')).status, 200);
+    const freshJob = page.service.enqueueTurn(page.turn({ project: page.projectId }));
+    assert.ok(freshJob);
+    await page.flush();
+    assert.equal(page.calls.extract.length, 1);
+    assert.equal(page.db.prepare('SELECT state FROM memory_jobs WHERE id=?').get(freshJob.id).state, 'completed');
 });
 
 test('retrieval removes deleted or edited snapshots before returning from an asynchronous embedding call', async context => {

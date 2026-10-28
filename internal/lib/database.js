@@ -26,6 +26,7 @@ export function openDatabase(filename) {
             auto_memory_enabled INTEGER NOT NULL DEFAULT 1 CHECK(auto_memory_enabled IN (0,1)),
             mfa_secret TEXT,
             mfa_last_step INTEGER,
+            deleted_at INTEGER CHECK(deleted_at IS NULL OR active=0),
             created_at INTEGER NOT NULL DEFAULT 0,
             updated_at INTEGER NOT NULL DEFAULT 0
         );
@@ -110,6 +111,10 @@ export function openDatabase(filename) {
         CREATE INDEX IF NOT EXISTS audit_created ON audit_records(created_at);
         CREATE INDEX IF NOT EXISTS audit_actor ON audit_records(actor_id,created_at);
     `);
+    if (!db.prepare('PRAGMA table_info(users)').all().some(column => column.name === 'deleted_at')) {
+        db.exec('ALTER TABLE users ADD COLUMN deleted_at INTEGER CHECK(deleted_at IS NULL OR active=0)');
+    }
+    db.exec('CREATE INDEX IF NOT EXISTS users_status ON users(deleted_at,active,system_role)');
     if (filename !== ':memory:') {
         for (const suffix of ['', '-wal', '-shm']) {
             if (fs.existsSync(filename + suffix)) fs.chmodSync(filename + suffix, 0o600);
