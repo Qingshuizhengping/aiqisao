@@ -1,0 +1,24 @@
+{
+  "name": "weizhiyu-internal-assistant",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "start": "node launch.mjs",
+    "build": "node scripts/build.mjs",
+    "test": "node --test tests/*.test.js",
+    "backup": "node scripts/backup.mjs"
+  },
+  "dependencies": {
+    "better-sqlite3": "13.0.3",
+    "express": "4.22.3",
+    "otpauth": "9.5.2",
+    "pdfjs-dist": "6.4.299"
+  },
+  "devDependencies": {
+    "esbuild": "0.28.2"
+  }
+}

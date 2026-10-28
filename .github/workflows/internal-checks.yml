@@ -1,0 +1,32 @@
+name: Internal assistant checks
+on:
+  push:
+    paths:
+      - 'internal/**'
+      - 'optimized/src/**'
+      - 'optimized/public/static/img/**'
+      - '.github/workflows/internal-checks.yml'
+  pull_request:
+    paths:
+      - 'internal/**'
+      - 'optimized/src/**'
+      - 'optimized/public/static/img/**'
+      - '.github/workflows/internal-checks.yml'
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: internal
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: internal/package-lock.json
+      - run: npm ci --no-audit --no-fund
+      - run: npm test
+      - run: npm run build
