@@ -9,6 +9,9 @@ import { fixture, eventually, gate } from './helpers/application.js';
 import { publicUser } from '../lib/access.js';
 import { openDatabase } from '../lib/database.js';
 import { createKnowledgeService } from '../lib/knowledge.js';
+import { createKnowledgeAccess } from '../lib/knowledge-access.js';
+import { createKnowledgeJobs } from '../lib/knowledge-jobs.js';
+import { zip } from './helpers/office.js';
 
 function raw(setup, client, method, route, bytes, extraHeaders = {}) {
     return new Promise((resolve, reject) => {
@@ -63,41 +66,6 @@ function project(setup, manager, members) {
     for (const person of [manager, ...members]) setup.db.prepare('INSERT INTO project_members(project_id,user_id,role,created_at) VALUES(?,?,?,?)')
         .run(id, person.id, person.id === manager.id ? 'admin' : 'member', now);
     return id;
-}
-
-function crc32(bytes) {
-    let crc = 0xffffffff;
-    for (const byte of bytes) {
-        crc ^= byte;
-        for (let bit = 0; bit < 8; bit++) crc = crc >>> 1 ^ (crc & 1 ? 0xedb88320 : 0);
-    }
-    return (crc ^ 0xffffffff) >>> 0;
-}
-
-// Minimal stored ZIPs keep parser fixtures independent from the implementation's archive library.
-function zip(entries) {
-    const files = [];
-    const directory = [];
-    let offset = 0;
-    for (const [name, content] of Object.entries(entries)) {
-        const filename = Buffer.from(name);
-        const bytes = Buffer.from(content);
-        const checksum = crc32(bytes);
-        const local = Buffer.alloc(30);
-        local.writeUInt32LE(0x04034b50, 0); local.writeUInt16LE(20, 4);
-        local.writeUInt32LE(checksum, 14); local.writeUInt32LE(bytes.length, 18); local.writeUInt32LE(bytes.length, 22); local.writeUInt16LE(filename.length, 26);
-        files.push(local, filename, bytes);
-        const central = Buffer.alloc(46);
-        central.writeUInt32LE(0x02014b50, 0); central.writeUInt16LE(20, 4); central.writeUInt16LE(20, 6);
-        central.writeUInt32LE(checksum, 16); central.writeUInt32LE(bytes.length, 20); central.writeUInt32LE(bytes.length, 24); central.writeUInt16LE(filename.length, 28); central.writeUInt32LE(offset, 42);
-        directory.push(central, filename);
-        offset += local.length + filename.length + bytes.length;
-    }
-    const central = Buffer.concat(directory);
-    const end = Buffer.alloc(22);
-    end.writeUInt32LE(0x06054b50, 0); end.writeUInt16LE(directory.length / 2, 8); end.writeUInt16LE(directory.length / 2, 10);
-    end.writeUInt32LE(central.length, 12); end.writeUInt32LE(offset, 16);
-    return Buffer.concat([...files, central, end]);
 }
 
 function documentFixture() {
@@ -507,4 +475,157 @@ test('system administrators inspect files through a dedicated audited read-only 
     assert.equal((await alice.call('GET', '/api/admin/audit/files')).status, 403);
     assert.equal((await alice.call('GET', '/api/admin/audit/files/' + uploaded.body.file.id)).status, 403);
     assert.ok(setup.db.prepare("SELECT COUNT(*) AS count FROM audit_records WHERE actor_id=? AND target_type='knowledge_file'").get(admin.id).count >= 1);
+});
+
+test('sparse Excel coordinates and self-closing blank cells preserve payment column meaning', async context => {
+    const setup = await fixture(context);
+    const alice = setup.employee('alice');
+    const bytes = zip({ 'xl/worksheets/sheet1.xml': '<worksheet><sheetData>'
+        + '<row r="1"><c r="A1" t="inlineStr"><is><t>门店</t></is></c><c r="B1" t="inlineStr"><is><t>已付款</t></is></c><c r="C1" t="inlineStr"><is><t>待付款</t></is></c></row>'
+        + '<row r="2"><c r="A2" t="inlineStr"><is><t>青禾店</t></is></c><c r="C2"><v>25000</v></c></row>'
+        + '<row r="3"><c r="A3" t="inlineStr"><is><t>远山店</t></is></c><c r="B3"/><c r="C3"><v>36000</v></c></row>'
+        + '<row r="4"><c r="AA4" t="inlineStr"><is><t>跨列备注</t></is></c></row>'
+        + '</sheetData></worksheet>' });
+    const uploaded = await upload(setup, alice, 'payments.xlsx', bytes);
+    assert.equal(uploaded.status, 201);
+    const detail = await ready(alice, uploaded.body.file.id);
+    assert.match(detail.text, /门店\t已付款\t待付款\n青禾店\t\t25000\n远山店\t\t36000/);
+    assert.ok(detail.text.split('\n').some(row => row === '\t'.repeat(26) + '跨列备注'));
+});
+
+test('sparse Excel input stays bounded by real column coordinates and expanded text limits', async context => {
+    const setup = await fixture(context);
+    const alice = setup.employee('alice');
+    const beyondExcel = zip({ 'xl/worksheets/sheet1.xml': '<worksheet><row><c r="XFE1"><v>1</v></c></row></worksheet>' });
+    const invalid = await upload(setup, alice, 'invalid-column.xlsx', beyondExcel);
+    assert.equal((await failed(alice, invalid.body.file.id)).errorCode, 'KNOWLEDGE_PARSE_FAILED');
+    const expanded = zip({ 'xl/worksheets/sheet1.xml': '<worksheet>' + Array.from({ length: 14 }, (_, index) => '<row><c r="XFD' + (index + 1) + '"><v>1</v></c></row>').join('') + '</worksheet>' });
+    const limited = await upload(setup, alice, 'sparse-limit.xlsx', expanded);
+    assert.equal((await failed(alice, limited.body.file.id)).errorCode, 'KNOWLEDGE_TEXT_LIMIT');
+});
+
+test('approved shared files survive uploader disable, project departure and deletion and can be reindexed by current admins', async context => {
+    let unavailable = true;
+    const setup = await fixture(context, { provider: { async embed(texts) {
+        if (unavailable) throw new Error('Synthetic embedding outage');
+        return texts.map(() => [1, 0, 0]);
+    } } });
+    const owner = setup.employee('owner');
+    const manager = setup.employee('manager');
+    const outsider = setup.employee('outsider');
+    const projectId = project(setup, manager, [owner]);
+    const uploaded = await upload(setup, owner, 'project-budget.txt', '青禾项目待付款为25000元。', 'project_shared', projectId);
+    const id = uploaded.body.file.id;
+    await ready(owner, id);
+    await manager.call('POST', '/api/knowledge/files/' + id + '/review', { decision: 'approve' });
+    await eventually(() => setup.db.prepare('SELECT index_state FROM knowledge_files WHERE id=?').get(id).index_state === 'failed');
+    unavailable = false;
+    for (const revoke of [
+        () => setup.db.prepare('UPDATE users SET active=0 WHERE id=?').run(owner.id),
+        () => setup.db.prepare('DELETE FROM project_members WHERE user_id=? AND project_id=?').run(owner.id, projectId),
+        () => setup.db.prepare('UPDATE users SET deleted_at=? WHERE id=?').run(Date.now(), owner.id),
+    ]) {
+        revoke();
+        setup.db.prepare("UPDATE knowledge_files SET index_state='failed' WHERE id=?").run(id);
+        assert.equal((await outsider.call('POST', '/api/knowledge/files/' + id + '/retry', {})).status, 404);
+        assert.equal((await manager.call('POST', '/api/knowledge/files/' + id + '/retry', {})).status, 200);
+        await eventually(() => setup.db.prepare('SELECT index_state FROM knowledge_files WHERE id=?').get(id).index_state === 'ready');
+    }
+    const detail = (await manager.call('GET', '/api/knowledge/files/' + id)).body.file;
+    assert.equal(detail.userId, owner.id);
+    assert.equal(detail.ownerName, 'owner');
+    assert.equal(detail.canDelete, true);
+    const found = await setup.knowledge.retrieve({ user: actor(setup, manager), projectId, query: '青禾待付款' });
+    assert.ok(found.references.some(reference => reference.fileId === id));
+    assert.equal((await manager.call('DELETE', '/api/knowledge/files/' + id)).status, 200);
+});
+
+test('private index work rechecks author access after await and never commits revoked vectors', async context => {
+    const entered = gate(), release = gate();
+    context.after(() => release.resolve());
+    const setup = await fixture(context, { provider: { async embed(texts) {
+        entered.resolve(); await release.promise;
+        return texts.map(() => [1, 0, 0]);
+    } } });
+    const owner = setup.employee('owner');
+    const uploaded = await upload(setup, owner, 'private.txt', '青禾个人资料预算25000元。');
+    const id = uploaded.body.file.id;
+    await entered.promise;
+    setup.db.prepare('UPDATE users SET active=0 WHERE id=?').run(owner.id);
+    release.resolve();
+    await eventually(() => setup.db.prepare('SELECT index_state FROM knowledge_files WHERE id=?').get(id).index_state === 'failed');
+    assert.equal(setup.db.prepare('SELECT error_code FROM knowledge_files WHERE id=?').get(id).error_code, 'KNOWLEDGE_ACCESS_CHANGED');
+    assert.equal(setup.db.prepare('SELECT COUNT(*) AS count FROM knowledge_chunks WHERE file_id=? AND embedding IS NOT NULL').get(id).count, 0);
+});
+
+test('approved shared indexing can complete when its original uploader leaves during an embedding request', async context => {
+    const entered = gate(), release = gate();
+    context.after(() => release.resolve());
+    const setup = await fixture(context, { provider: { async embed(texts) {
+        entered.resolve(); await release.promise; return texts.map(() => [1, 0, 0]);
+    } } });
+    const owner = setup.employee('owner'), manager = setup.employee('manager');
+    const projectId = project(setup, manager, [owner]);
+    const uploaded = await upload(setup, owner, 'shared.txt', '青禾共享资料待付款25000元。', 'project_shared', projectId);
+    const id = uploaded.body.file.id;
+    await ready(owner, id);
+    assert.equal((await manager.call('POST', '/api/knowledge/files/' + id + '/review', { decision: 'approve' })).status, 200);
+    await entered.promise;
+    setup.db.prepare('DELETE FROM project_members WHERE user_id=? AND project_id=?').run(owner.id, projectId);
+    setup.db.prepare('UPDATE users SET active=0 WHERE id=?').run(owner.id);
+    release.resolve();
+    await eventually(() => setup.db.prepare('SELECT index_state FROM knowledge_files WHERE id=?').get(id).index_state === 'ready');
+    assert.ok(setup.db.prepare('SELECT embedding FROM knowledge_chunks WHERE file_id=?').get(id).embedding);
+});
+
+test('archive-and-restore invalidates pending approved shared indexing results', async context => {
+    const entered = gate(), release = gate();
+    context.after(() => release.resolve());
+    const setup = await fixture(context, { provider: { async embed(texts) {
+        entered.resolve(); await release.promise;
+        return texts.map(() => [1, 0, 0]);
+    } } });
+    const owner = setup.employee('owner');
+    const manager = setup.employee('manager');
+    const projectId = project(setup, manager, [owner]);
+    const uploaded = await upload(setup, manager, 'shared.txt', '青禾项目资料待付款25000元。', 'project_shared', projectId);
+    const id = uploaded.body.file.id;
+    await entered.promise;
+    setup.db.prepare('UPDATE projects SET archived=1 WHERE id=?').run(projectId);
+    setup.db.prepare('UPDATE projects SET archived=0 WHERE id=?').run(projectId);
+    release.resolve();
+    await eventually(() => setup.db.prepare('SELECT index_state FROM knowledge_files WHERE id=?').get(id).index_state === 'failed');
+    assert.equal(setup.db.prepare('SELECT error_code FROM knowledge_files WHERE id=?').get(id).error_code, 'KNOWLEDGE_ACCESS_CHANGED');
+    assert.equal(setup.db.prepare('SELECT COUNT(*) AS count FROM knowledge_chunks WHERE file_id=? AND embedding IS NOT NULL').get(id).count, 0);
+});
+
+test('candidate parsing keeps author authorization and rejected candidates do not revive after an async parse', async context => {
+    const setup = await fixture(context);
+    await setup.knowledge.stop();
+    const owner = setup.employee('owner');
+    const manager = setup.employee('manager');
+    const projectId = project(setup, manager, [owner]);
+    for (const action of ['revoke', 'reject', 'delete']) {
+        const entered = gate(), release = gate();
+        context.after(() => release.resolve());
+        const uploaded = await upload(setup, owner, action + '.txt', '青禾资料待审核', 'project_shared', projectId);
+        const id = uploaded.body.file.id;
+        const jobs = createKnowledgeJobs({ db: setup.db, model: 'mock-embed', access: createKnowledgeAccess({ db: setup.db }),
+            embed: async texts => texts.map(() => [1, 0, 0]),
+            async parseFile() { entered.resolve(); await release.promise; return '本次延迟解析得到的资料内容'; } });
+        jobs.start();
+        await entered.promise;
+        if (action === 'revoke') setup.db.prepare('DELETE FROM project_members WHERE user_id=? AND project_id=?').run(owner.id, projectId);
+        else if (action === 'reject') assert.equal((await manager.call('POST', '/api/knowledge/files/' + id + '/review', { decision: 'reject' })).status, 200);
+        else assert.equal((await owner.call('DELETE', '/api/knowledge/files/' + id)).status, 200);
+        release.resolve();
+        await eventually(() => !jobs.health().running);
+        await jobs.stop();
+        const row = setup.db.prepare('SELECT status,text_content,processing_state FROM knowledge_files WHERE id=?').get(id);
+        assert.equal(row.text_content, '');
+        assert.equal(setup.db.prepare('SELECT COUNT(*) AS count FROM knowledge_chunks WHERE file_id=?').get(id).count, 0);
+        if (action === 'reject') { assert.equal(row.status, 'rejected'); assert.equal(row.processing_state, 'interrupted'); }
+        if (action === 'delete') assert.equal(row.status, 'deleted');
+        if (action === 'revoke') setup.db.prepare('INSERT INTO project_members(project_id,user_id,role,created_at) VALUES(?,?,?,?)').run(projectId, owner.id, 'member', Date.now());
+    }
 });

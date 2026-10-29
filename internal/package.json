@@ -10,7 +10,8 @@
     "start": "node launch.mjs",
     "build": "node scripts/build.mjs",
     "test": "node --test tests/*.test.js",
-    "backup": "node scripts/backup.mjs"
+    "backup": "node scripts/backup.mjs",
+    "repair:xlsx": "node scripts/repair-xlsx.mjs"
   },
   "dependencies": {
     "better-sqlite3": "13.0.3",

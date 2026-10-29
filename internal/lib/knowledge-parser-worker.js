@@ -94,19 +94,37 @@ function spreadsheet(bytes) {
     const strings = [...(entries.get('xl/sharedStrings.xml') || '').matchAll(/<si(?:\s[^>]*)?>([\s\S]*?)<\/si>/g)].map(match => xmlTexts(match[1], 't'));
     const output = [];
     let cells = 0;
+    let characters = 0;
+    function append(value) {
+        characters += value.length + 1;
+        if (characters > MAX_TEXT) invalid('KNOWLEDGE_TEXT_LIMIT');
+        output.push(value);
+    }
     const sheets = [...entries.keys()].filter(name => /worksheets\/sheet\d+\.xml$/.test(name)).sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
     if (!sheets.length || sheets.length > 100) invalid('KNOWLEDGE_ARCHIVE_LIMIT');
     for (const name of sheets) {
-        output.push('工作表 ' + name.match(/sheet(\d+)/)[1]);
+        append('工作表 ' + name.match(/sheet(\d+)/)[1]);
         for (const row of entries.get(name).split(/<\/row>/)) {
             const values = [];
-            for (const cell of row.matchAll(/<c\b([^>]*)>([\s\S]*?)<\/c>/g)) {
+            let previousColumn = 0;
+            for (const cell of row.matchAll(/<c\b([^>]*?)(?:\/>|>([\s\S]*?)<\/c>)/g)) {
                 if (++cells > 50000) invalid('KNOWLEDGE_TEXT_LIMIT');
+                const reference = cell[1].match(/\br\s*=\s*["']([^"']+)["']/)?.[1];
+                let column = previousColumn + 1;
+                if (reference !== undefined) {
+                    const coordinates = /^([A-Z]{1,3})([1-9]\d{0,6})$/i.exec(reference);
+                    if (!coordinates || Number(coordinates[2]) > 1048576) invalid();
+                    column = [...coordinates[1].toUpperCase()].reduce((index, letter) => index * 26 + letter.charCodeAt(0) - 64, 0);
+                }
+                if (column <= previousColumn || column > 16384) invalid();
+                while (values.length < column - 1) values.push('');
                 const type = cell[1].match(/\bt\s*=\s*["']([^"']+)["']/)?.[1];
-                const value = cell[2].match(/<v(?:\s[^>]*)?>([\s\S]*?)<\/v>/)?.[1];
-                values.push(type === 's' ? strings[Number(value)] || '' : type === 'inlineStr' ? xmlTexts(cell[2], 't') : entity(value || ''));
+                const body = cell[2] || '';
+                const value = body.match(/<v(?:\s[^>]*)?>([\s\S]*?)<\/v>/)?.[1];
+                values.push(type === 's' ? strings[Number(value)] || '' : type === 'inlineStr' ? xmlTexts(body, 't') : entity(value || ''));
+                previousColumn = column;
             }
-            if (values.length) output.push(values.join('\t'));
+            if (values.length) append(values.join('\t'));
         }
     }
     return output.join('\n');
