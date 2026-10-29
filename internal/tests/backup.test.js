@@ -9,6 +9,7 @@ import Database from 'better-sqlite3';
 import { openDatabase } from '../lib/database.js';
 import { APP_DIRECTORY, runBackup, readBackupKey } from '../scripts/backup.mjs';
 import { runRestoreCheck } from '../scripts/restore-check.mjs';
+import { initializeGroundingSchema } from '../lib/grounding-store.js';
 
 function fixture(context) {
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'wzy-backup-test-'));
@@ -85,6 +86,30 @@ test('AES-GCM export round trips and rejects wrong keys and modified ciphertext 
     fs.writeFileSync(damaged, bytes);
     await assert.rejects(runRestoreCheck({ env, inputPath: damaged, outputDirectory }), /authenticate|auth/i);
     assert.deepEqual(fs.readdirSync(outputDirectory), []);
+});
+
+test('confirmed source and fact histories survive an encrypted backup and independent restore', async context => {
+    const setup = fixture(context); initializeGroundingSchema(setup.db);
+    const now = Date.now(), source = randomUUID(), confirmation = randomUUID(), fact = randomUUID();
+    setup.db.prepare('INSERT INTO source_confirmations(id,source_type,source_id,source_version,confirmed_by,confirmed_at) VALUES(?,?,?,?,?,?)')
+        .run(confirmation,'memory',source,3,setup.userId,now);
+    setup.db.prepare(`INSERT INTO standard_facts(id,scope,user_id,entity,field,value,unit,conditions,valid_from,valid_until,
+        source_type,source_id,source_version,source_confirmation_id,evidence,status,version,confirmed_by,confirmed_at,created_by,created_at,updated_at)
+        VALUES(?,'personal',?,'合成产品','零售价','168.00','元/瓶','仅用于合成验收','2026-01-01','2026-12-31','memory',?,3,?,'合成产品零售价168.00元/瓶。','confirmed',2,?,?,?,?,?)`)
+        .run(fact,setup.userId,source,confirmation,setup.userId,now,setup.userId,now,now);
+    setup.db.prepare(`INSERT INTO fact_confirmations(id,fact_id,fact_version,source_type,source_id,source_version,source_confirmation_id,confirmed_by,confirmed_at,canonical_value)
+        VALUES(?,?,2,'memory',?,3,?,?,?,?)`).run(randomUUID(),fact,source,confirmation,setup.userId,now,JSON.stringify({value:'168.00',unit:'元/瓶'}));
+    const env = {...setup.env,BACKUP_ENCRYPTION_KEY:Buffer.alloc(32,42).toString('base64'),BACKUP_EXPORT_DIRECTORY:path.join(setup.directory,'export')};
+    const backup = await runBackup({env});
+    const restored = await runRestoreCheck({env,inputPath:backup.encryptedExport,outputDirectory:path.join(setup.directory,'drill'),keep:true});
+    for (const table of ['source_confirmations','standard_facts','fact_confirmations']) assert.equal(restored.tableCounts[table],1);
+    const recovered = new Database(restored.restoredPath,{readonly:true});
+    try {
+        const row = recovered.prepare('SELECT * FROM standard_facts').get();
+        assert.equal(row.value,'168.00'); assert.equal(row.source_confirmation_id,confirmation);
+        assert.equal(row.valid_until,'2026-12-31');
+        assert.equal(JSON.parse(recovered.prepare('SELECT canonical_value FROM fact_confirmations').get().canonical_value).unit,'元/瓶');
+    } finally { recovered.close(); }
 });
 
 test('local retention removes only generated backups older than fourteen days and leaves external copies intact', async context => {

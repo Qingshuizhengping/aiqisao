@@ -12,7 +12,10 @@ export async function fixture(context, options = {}) {
         sessionTtlMs: 3600000, encryptionKey: Buffer.alloc(32, 7), bootstrapUsername: 'admin',
         bootstrapPassword: 'InitialPassword2026!', chatModel: 'mock-chat', memoryModel: 'mock-memory',
         embeddingModel: 'mock-embed', apiKey: 'mock-key', chatConcurrency: 2, chatQueueCapacity: 32,
-        contextCharacters: 48000, memoryContextCharacters: 9000, ...options.config };
+        contextCharacters: 48000, memoryContextCharacters: 9000,
+        // These long-standing fixtures test the transport/queue contract. Strict
+        // answer tests opt in explicitly and use confirmed-source fixtures.
+        strictGrounding: false, ...options.config };
     const calls = [];
     const extraction = [];
     const provider = { async *chat(messages, args) { calls.push(messages); yield '**测试**\n\n正常回答。'; },

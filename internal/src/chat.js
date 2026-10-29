@@ -3,6 +3,8 @@ import { api, subscribeRun } from './api.js';
 import { openKnowledgeFile } from './knowledge.js';
 import { el, button, icon, notice, badge, toast, formatDate } from './ui.js';
 import { createDraftRepository, createDraftBinding } from './workspace-controller.js';
+import { groundingPresentation, sourceIdentity, citationNumber } from './grounding-state.js';
+import { openGroundingSource } from './grounding.js';
 
 const draftPrefix = 'weizhiyu-internal-draft:';
 const terminal = new Set(['completed', 'stopped', 'failed', 'interrupted']);
@@ -32,22 +34,25 @@ export function messageView(message, { onMemory, audit = false } = {}) {
     let previousTools;
     function update(value) {
         message = value;
-        if (value.content !== previousContent) {
-            if (value.role === 'user') body.textContent = value.content || '';
-            else body.innerHTML = renderMarkdown(value.content || '');
-            previousContent = value.content;
+        const grounding = groundingPresentation(value);
+        const visibleContent = grounding.pending ? '' : value.content || '';
+        if (visibleContent !== previousContent) {
+            if (value.role === 'user') body.textContent = visibleContent;
+            else body.innerHTML = renderMarkdown(visibleContent);
+            previousContent = visibleContent;
         }
         const signature = JSON.stringify([value.status, value.metadata, Boolean(value.content)]);
         if (signature === previousTools) return;
         previousTools = signature;
         const states = { generating: '正在整理思路…', stopped: '已停止生成', failed: '生成未完成', interrupted: '生成已中断' };
-        const state = states[value.status];
+        const state = value.status === 'generating' && value.metadata?.grounding ? grounding.progress : states[value.status];
         const memories = value.metadata?.memories || [];
         const files = value.metadata?.files || [];
         tools.replaceChildren(...[
             value.status === 'generating' && el('span', { className: 'generating-dot', 'aria-hidden': 'true' }),
             state && el('span', { className: 'message-state', role: 'status', text: state }),
-            value.content && button('复制', async () => {
+            grounding.status && badge(grounding.status, grounding.tone),
+            visibleContent && button('复制', async () => {
                 try { await navigator.clipboard.writeText(message.content); toast('回答已复制。'); }
                 catch { toast('浏览器未允许复制，请长按文字选择。', 'error'); }
             }, { className: 'button quiet', glyph: 'copy' }),
@@ -60,6 +65,12 @@ export function messageView(message, { onMemory, audit = false } = {}) {
                 ...Array.from(new Map(files.map(file => [file.fileId || file.id, file])).values()).map(file => audit
                     ? el('span', { className: 'chip', text: file.filename || file.name || '资料文件', title: file.content })
                     : button(file.filename || file.name || '资料文件', () => openKnowledgeFile({ fileId: file.fileId || file.id }), { className: 'chip', glyph: 'folder', title: file.filename || file.name || '查看资料' }))),
+            grounding.citations.length > 0 && el('div', { className: 'grounding-reference-list', 'aria-label': '逐项核验依据' },
+                ...grounding.citations.map((citation, index) => {
+                    const label = '[' + citationNumber(citation, index) + '] ' + (citation.title || '事实来源');
+                    return audit || !sourceIdentity(citation) ? el('span', { className: 'chip', text: label })
+                        : button(label, () => openGroundingSource({ reference: citation }), { className: 'chip', glyph: 'shield', title: '核对来源版本与原文' });
+                })),
             audit && el('small', { text: formatDate(value.createdAt) })].filter(child => child !== false && child !== undefined && child !== null));
     }
     update(message);
@@ -199,7 +210,7 @@ export function followRun(runId, { onUpdate, onState, onConnection, onFinished, 
     }
     function event(type, data) {
         if (stopped) return;
-        if (type === 'snapshot' || type === 'done' || type === 'error') snapshot(data);
+        if (type === 'snapshot' || type === 'done' || type === 'error' || type === 'progress') snapshot(data);
         if (type === 'delta') {
             if (!message || typeof data.delta !== 'string' || !Number.isInteger(data.offset) || data.offset < 0) throw new Error('实时内容需要重新同步。');
             const current = message.content || '';

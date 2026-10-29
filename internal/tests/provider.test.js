@@ -212,3 +212,47 @@ test('declared and actual oversized bodies fail safely and no API key produces a
     assertSafe((await consume(missing.provider.chat(messages))).error, 'MODEL_NOT_CONFIGURED');
     assert.equal(missing.calls.length, 0);
 });
+
+test('grounded drafts and verification use strict structured responses without streaming or external context', async () => {
+    for (const [method, value] of [['draftGrounded', {claims:[]}], ['verifyGrounded', {verdicts:[]}]]) {
+        const page = fixture(jsonResponse({choices:[{finish_reason:'stop',message:{content:JSON.stringify(value)}}]}));
+        const input = {question:'原文说什么？',evidence:[{id:'m1',content:'先核对资料。'}],facts:[]};
+        assert.deepEqual(await page.provider[method](input), value);
+        const body = page.calls[0].json;
+        assert.equal(body.stream, false); assert.equal(body.temperature, 0);
+        assert.equal(body.model, CONFIG.chatModel);
+        assert.deepEqual(body.response_format, {type:'json_object'});
+        assert.deepEqual(JSON.parse(body.messages[1].content), input);
+        assert.match(body.messages[0].content, /数据/);
+    }
+});
+
+test('structured grounding rejects refusal, truncation, malformed JSON and non-object payloads safely', async () => {
+    const invalid = [
+        {choices:[{finish_reason:'length',message:{content:'{"claims":[]}'}}]},
+        {choices:[{finish_reason:'stop',message:{refusal:'PRIVATE_FIXTURE_TOKEN',content:'{}'}}]},
+        {choices:[{finish_reason:'stop',message:{content:'```json\n{}\n```'}}]},
+        {choices:[{finish_reason:'stop',message:{content:'[]'}}]},
+        {choices:[{message:{content:'{}'}}]},
+    ];
+    for (const value of invalid) for (const method of ['draftGrounded','verifyGrounded','proposeFacts']) {
+        await assert.rejects(fixture(jsonResponse(value)).provider[method]({}), error => {
+            assertSafe(error,'GROUNDING_RESPONSE_INVALID'); return true;
+        });
+    }
+    const controller = new AbortController(); const reason = new DOMException('Cancelled','AbortError'); controller.abort(reason);
+    const page = fixture(() => assert.fail('Cancelled request dispatched'));
+    for (const method of ['draftGrounded','verifyGrounded','proposeFacts']) await assert.rejects(page.provider[method]({}, {signal:controller.signal}), error => error === reason);
+    assert.equal(page.calls.length, 0);
+});
+
+test('fact proposals retain truncation metadata and bound the model source payload', async () => {
+    for (const source of [{content:'x'.repeat(24001)}, {content:'short',truncated:true}]) {
+        const page = fixture(jsonResponse({choices:[{finish_reason:'stop',message:{content:'{"facts":[]}'}}]}));
+        assert.deepEqual(await page.provider.proposeFacts({source}), {facts:[]});
+        const input = JSON.parse(page.calls[0].json.messages[1].content);
+        assert.equal(input.source.truncated, true);
+        assert.ok(input.source.content.length <= 24000);
+        assert.match(page.calls[0].json.messages[0].content, /只提出候选/);
+    }
+});

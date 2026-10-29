@@ -14,7 +14,7 @@ function objectJson(value, fallback = {}) {
     try { return JSON.parse(value || '{}'); } catch { return fallback; }
 }
 
-export function createChatDomain({ db, config, memory, knowledge }) {
+export function createChatDomain({ db, config, memory, knowledge, grounding }) {
     const rates = new Map();
     function loadConversation(id, user, write = false) {
         const row = db.prepare(`SELECT conversation.*, employee.display_name AS owner_name,
@@ -49,6 +49,15 @@ export function createChatDomain({ db, config, memory, knowledge }) {
         const metadata = { ...message.metadata };
         if (Array.isArray(metadata.memories)) metadata.memories = metadata.memories.filter(entry => entry.scope === 'project_shared');
         if (Array.isArray(metadata.files)) metadata.files = metadata.files.filter(entry => entry.scope === 'project_shared');
+        if (metadata.grounding) {
+            const value = metadata.grounding;
+            const citations = (value.citations || []).filter(entry => entry.scope === 'project_shared');
+            const allowed = new Set(citations.map(entry => entry.id));
+            const allowedFacts = new Set(citations.map(entry => entry.factId).filter(Boolean));
+            metadata.grounding = { stage: value.stage, status: value.status, expanded: value.expanded, basis: value.basis,
+                citations, claims: (value.claims || []).filter(claim => claim.citationIds?.length && claim.citationIds.every(id => allowed.has(id))),
+                computations: (value.computations || []).filter(item => (item.factIds || [item.factId]).every(id => allowedFacts.has(id))) };
+        }
         return { ...message, metadata };
     }
 
@@ -112,6 +121,17 @@ export function createChatDomain({ db, config, memory, knowledge }) {
         }
         worker.metadata = metadata;
         return [...context, ...history, { role: 'user', content: input }];
+    }
+
+    async function answerGrounded(run, signal, onProgress) {
+        const { user, conversation } = actorForRun(run);
+        const query = db.prepare('SELECT content FROM messages WHERE id=?').get(run.user_message_id).content;
+        return grounding.answer({ user, projectId: conversation.project_id, query, signal, onProgress });
+    }
+
+    function unavailableGrounded(run) {
+        const { user, conversation } = actorForRun(run);
+        return grounding.unavailable({ user, projectId: conversation.project_id });
     }
 
     function reserve(user) {
@@ -214,5 +234,6 @@ export function createChatDomain({ db, config, memory, knowledge }) {
     }
 
     return { loadConversation, conversationView, messageView, visibleMessage, runView, actorForRun, buildContext,
-        listConversations, createConversation, readConversation, updateConversation, deleteConversation, submitRun };
+        listConversations, createConversation, readConversation, updateConversation, deleteConversation, submitRun,
+        grounded: Boolean(grounding), answerGrounded, unavailableGrounded };
 }

@@ -1,8 +1,9 @@
 import { api, query, uploadFile, downloadFile, getSession } from './api.js';
 import { el, button, input, panel, notice, empty, badge, formatDate, confirmAction, toast } from './ui.js';
+import { openGroundingSource } from './grounding.js';
 
 const scopes = { personal: '个人资料', project_private: '项目内个人资料', project_shared: '项目共享资料' };
-const states = { queued: '等待解析', running: '正在解析', processing: '正在解析', ready: '可用于回答', failed: '解析未完成', interrupted: '解析已中断' };
+const states = { queued: '等待解析', running: '正在解析', processing: '正在解析', ready: '解析就绪', failed: '解析未完成', interrupted: '解析已中断' };
 const pendingStates = new Set(['queued', 'running', 'processing']);
 const allowedExtensions = ['txt', 'md', 'csv', 'json', 'pdf', 'docx', 'xlsx'];
 const defaultMaxBytes = 10 * 1024 * 1024;
@@ -52,7 +53,7 @@ export function createKnowledgeLibrary({ user, project, scope: initialScope = 'p
     const fileInput = el('input', { type: 'file', multiple: true, accept: allowedExtensions.map(value => '.' + value).join(','), hidden: true, 'aria-label': '选择上传的资料文件' });
     const upload = button('上传资料', () => fileInput.click(), { glyph: 'plus', className: 'button primary' });
     const refresh = button('刷新', () => load(), { className: 'button small' });
-    const description = el('p', { className: 'muted knowledge-help', text: '支持 PDF、Word（.docx）、Excel（.xlsx）、TXT、Markdown（.md）、CSV 和 JSON，每个文件不超过 10 MB。文字解析后，AI七嫂·员工专属版会在相关讨论中自动查找；图片与扫描件暂不识别。' });
+    const description = el('p', { className: 'muted knowledge-help', text: '支持 PDF、Word（.docx）、Excel（.xlsx）、TXT、Markdown（.md）、CSV 和 JSON，每个文件不超过 10 MB。解析后请核对来源版本及重要事实，确认后用于严格资料回答；图片与扫描件暂不识别。' });
     const help = el('div');
     const searchForm = el('form', { className: 'search-row' }, search.wrapper, button('', null, { type: 'submit', glyph: 'search', name: '搜索资料文件', className: 'icon-button' }));
     const element = el('section', { className: 'stack knowledge-library', 'aria-label': '资料文件' },
@@ -66,7 +67,7 @@ export function createKnowledgeLibrary({ user, project, scope: initialScope = 'p
         upload.textContent = uploading ? '正在上传…' : '上传资料';
         fileInput.disabled = uploading || archived;
         help.replaceChildren(...(archived ? [notice('项目已归档，资料文件仅供查看。')] : scope === 'project_shared'
-            ? [notice(project?.role === 'admin' ? '项目共享资料确认后用于本项目的讨论。' : '上传的共享资料将先等待项目管理员确认，确认后供项目成员检索。')]
+            ? [notice(project?.role === 'admin' ? '共享审核决定项目可见范围。重要事实还需在“事实与确认”中核对来源版本。' : '共享资料先等待项目管理员审核，再核对作为正式依据的来源版本。')]
             : [notice(scope === 'personal' ? '个人资料用于你的跨会话讨论，系统管理员可只读审计。' : '仅用于你在当前项目的讨论，不跨项目使用；系统管理员可只读审计。')]));
     }
     function schedulePoll() {
@@ -100,6 +101,9 @@ export function createKnowledgeLibrary({ user, project, scope: initialScope = 'p
     }
     function renderFile(file) {
         const actions = el('div', { className: 'card-actions' }, button('查看内容', () => onFile(file.id), { glyph: 'folder' }));
+        if (fileState(file) === 'ready' && file.status === 'active') actions.append(button('核对事实依据', () => openGroundingSource({
+            reference: { sourceType: 'file', sourceId: file.id, version: file.version }, onBack: onReopen,
+        }), { glyph: 'shield' }));
         if (file.canDownload) actions.append(button('下载原文件', () => action(() => saveDownload(file)), { className: 'button' }));
         if (file.canRetry) actions.append(button(file.indexState === 'failed' && fileState(file) === 'ready' ? '重建语义索引' : '重试处理', () => action(() => api('/api/knowledge/files/' + encodeURIComponent(file.id) + '/retry', { method: 'POST', body: {} }))));
         if (file.canReview) actions.append(button('确认共享', () => action(() => api('/api/knowledge/files/' + encodeURIComponent(file.id) + '/review', { method: 'POST', body: { decision: 'approve' } })), { glyph: 'check', disabled: fileState(file) !== 'ready', title: fileState(file) === 'ready' ? '确认共享' : '解析完成后可确认共享' }),
@@ -144,7 +148,7 @@ export function createKnowledgeLibrary({ user, project, scope: initialScope = 'p
                 if (!connected() || uploadScope !== scope) break;
             }
             if (connected()) {
-                progress.textContent = completed ? '已上传 ' + completed + ' 份资料，解析完成后会自动用于相关回答。' : '上传未完成。';
+                progress.textContent = completed ? '已上传 ' + completed + ' 份资料。解析完成后请到“事实与确认”核对来源及重要事实。' : '上传未完成。';
                 await load(true);
                 if (failures.length) errors.replaceChildren(...failures.map(message => notice(message, 'error')));
             }

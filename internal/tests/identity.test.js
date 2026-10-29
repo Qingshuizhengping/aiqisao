@@ -8,6 +8,7 @@ import { audit, projectRole, publicUser, requireProjectAdmin } from '../lib/acce
 import { createProjectsRouter } from '../lib/projects.js';
 import { createAdminRouter } from '../lib/admin.js';
 import { AppError } from '../lib/errors.js';
+import { fetchLocal } from './helpers/fetch-local.js';
 
 const origin = 'https://internal.test';
 const initialPassword = 'InitialPassword2026!';
@@ -57,7 +58,7 @@ async function fixture(context) {
             async call(method, route, data, options = {}) {
                 const headers = { ...(cookie ? { Cookie: cookie } : {}), ...(method === 'GET' ? {} : { Origin: origin, 'X-CSRF-Token': csrf }), ...options.headers };
                 if (data !== undefined) headers['Content-Type'] = 'application/json';
-                const response = await fetch(base + route, { method, headers, body: data === undefined ? undefined : JSON.stringify(data) });
+                const response = await fetchLocal(base + route, { method, headers, body: data === undefined ? undefined : JSON.stringify(data) });
                 const setCookie = response.headers.get('set-cookie');
                 if (setCookie) cookie = setCookie.split(';')[0];
                 let body;

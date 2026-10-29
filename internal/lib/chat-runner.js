@@ -64,18 +64,41 @@ export function createChatRunner({ db, config, provider, memory, domain }) {
                     try { actorForRun(run); } catch { worker.controller.abort(new AppError(403, 'CHAT_ACCESS_REVOKED', '账号或项目权限变化，生成已停止。')); }
                 }, 1000);
                 permissionTimer.unref?.();
-                const messages = await buildContext(run, worker);
-                worker.controller.signal.throwIfAborted();
-                for await (const delta of provider.chat(messages, { signal: worker.controller.signal })) {
+                if (domain.grounded) {
+                    const progress = grounding => {
+                        worker.controller.signal.throwIfAborted();
+                        actorForRun(run);
+                        worker.metadata = { memories: [], files: [], grounding };
+                        db.prepare('UPDATE messages SET metadata=?,updated_at=? WHERE id=?')
+                            .run(JSON.stringify(worker.metadata), Date.now(), run.assistant_message_id);
+                        broadcast(run.id, 'progress', { run: runView(db.prepare('SELECT * FROM chat_runs WHERE id=?').get(run.id)),
+                            message: messageView(db.prepare('SELECT * FROM messages WHERE id=?').get(run.assistant_message_id)) });
+                    };
+                    let answer = await domain.answerGrounded(run, worker.controller.signal, progress);
                     worker.controller.signal.throwIfAborted();
                     actorForRun(run);
-                    if (typeof delta !== 'string') throw new AppError(502, 'MODEL_RESPONSE_INVALID', '模型返回格式异常。');
-                    if (worker.text.length + delta.length > 100000) throw new AppError(502, 'MODEL_OUTPUT_LIMIT', '回复过长，已保留生成内容。');
-                    const offset = worker.text.length;
-                    worker.text += delta;
+                    if (!answer.check()) answer = domain.unavailableGrounded(run);
+                    if (typeof answer.text !== 'string' || answer.text.length > 100000) answer = domain.unavailableGrounded(run);
+                    worker.metadata = { memories: [], files: [], grounding: answer.grounding };
+                    db.prepare('UPDATE messages SET metadata=?,updated_at=? WHERE id=?')
+                        .run(JSON.stringify(worker.metadata), Date.now(), run.assistant_message_id);
+                    worker.text = answer.text;
                     worker.dirty = true;
-                    if (Date.now() - worker.persistedAt >= 200) persistText(run, worker);
-                    broadcast(run.id, 'delta', { delta, offset });
+                    persistText(run, worker);
+                } else {
+                    const messages = await buildContext(run, worker);
+                    worker.controller.signal.throwIfAborted();
+                    for await (const delta of provider.chat(messages, { signal: worker.controller.signal })) {
+                        worker.controller.signal.throwIfAborted();
+                        actorForRun(run);
+                        if (typeof delta !== 'string') throw new AppError(502, 'MODEL_RESPONSE_INVALID', '模型返回格式异常。');
+                        if (worker.text.length + delta.length > 100000) throw new AppError(502, 'MODEL_OUTPUT_LIMIT', '回复过长，已保留生成内容。');
+                        const offset = worker.text.length;
+                        worker.text += delta;
+                        worker.dirty = true;
+                        if (Date.now() - worker.persistedAt >= 200) persistText(run, worker);
+                        broadcast(run.id, 'delta', { delta, offset });
+                    }
                 }
                 worker.controller.signal.throwIfAborted();
                 actorForRun(run);

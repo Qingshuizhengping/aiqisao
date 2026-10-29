@@ -12,9 +12,12 @@ import { createMemoryService } from './lib/memory.js';
 import { createKnowledgeService } from './lib/knowledge.js';
 import { createChatService } from './lib/chat.js';
 import { createProvider } from './lib/provider.js';
+import { createGroundingLibrary } from './lib/grounding-library.js';
+import { createGroundingRetrieval } from './lib/grounding-retrieval.js';
+import { createGroundedAnswerService } from './lib/grounding-answer.js';
 import { AppError } from './lib/errors.js';
 
-export const VERSION = 'internal-v20261029-1';
+export const VERSION = 'internal-v20261029-2';
 
 export function createApplication({ config, database, provider: suppliedProvider } = {}) {
     config ||= createConfig();
@@ -23,7 +26,13 @@ export function createApplication({ config, database, provider: suppliedProvider
     const auth = createAuth({ db, config });
     const memory = createMemoryService({ db, config, provider });
     const knowledge = createKnowledgeService({ db, config, provider });
-    const chat = createChatService({ db, config, provider, memory, knowledge });
+    const groundingLibrary = createGroundingLibrary({ db, provider });
+    const groundingRetrieval = createGroundingRetrieval({ db, config, provider, library: groundingLibrary });
+    const grounding = createGroundedAnswerService({ db, provider, library: groundingLibrary, retrieval: groundingRetrieval });
+    // Legacy transport fixtures can exercise the unchanged streaming contract;
+    // normal runtime configuration always enables the evidence gate.
+    const strictGrounding = config.strictGrounding !== false || !suppliedProvider;
+    const chat = createChatService({ db, config, provider, memory, knowledge, grounding: strictGrounding ? grounding : null });
     const app = express();
     let ready = false;
     let started = false;
@@ -41,7 +50,8 @@ export function createApplication({ config, database, provider: suppliedProvider
     app.get('/api/health', (request, response) => {
         const state = chat.health();
         response.status(ready && state.ready ? 200 : 503).json({ status: ready && state.ready ? 'ok' : 'recovering',
-            version: VERSION, chatReady: ready && state.ready, memory: memory.health(), knowledge: knowledge.health(), modelConfigured: Boolean(config.apiKey) });
+            version: VERSION, chatReady: ready && state.ready, memory: memory.health(), knowledge: knowledge.health(),
+            grounding: { mode: strictGrounding ? 'strict' : 'transport-fixture', ready }, modelConfigured: Boolean(config.apiKey) });
     });
     app.use('/api', auth.guardOrigin);
     app.use('/api/auth', auth.router);
@@ -56,6 +66,7 @@ export function createApplication({ config, database, provider: suppliedProvider
     app.use('/api/admin', createAdminRouter({ db, auth }));
     app.use('/api', memory.router);
     app.use('/api', knowledge.router);
+    app.use('/api', groundingLibrary.router);
     app.use('/api', chat.router);
     app.use('/api', (request, response) => response.status(404).json({ error: { code: 'NOT_FOUND', message: '接口不存在。' } }));
     const publicDirectory = path.join(APP_DIRECTORY, 'dist');
@@ -100,7 +111,7 @@ export function createApplication({ config, database, provider: suppliedProvider
         if (!database) db.close();
     }
 
-    return { app, db, auth, memory, knowledge, chat, config, startServices, close };
+    return { app, db, auth, memory, knowledge, chat, grounding, groundingLibrary, groundingRetrieval, config, startServices, close };
 }
 
 export async function startServer(options = {}) {

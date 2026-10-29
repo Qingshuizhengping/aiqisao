@@ -37,6 +37,7 @@ export function createConfig(env = process.env) {
         embeddingModel: env.INTERNAL_EMBEDDING_MODEL || 'BAAI/bge-m3',
         apiBase,
         apiKey: env.INTERNAL_API_KEY || '',
+        strictGrounding: true,
         dataDirectory: path.resolve(APP_DIRECTORY, env.INTERNAL_DATA_DIRECTORY || 'var'),
         chatConcurrency: boundedNumber(env.INTERNAL_CHAT_CONCURRENCY, 4, 1, 8),
         chatQueueCapacity: 32,

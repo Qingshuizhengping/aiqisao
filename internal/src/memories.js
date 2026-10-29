@@ -1,6 +1,7 @@
 import { api, query } from './api.js';
 import { el, button, input, select, panel, closePanel, notice, empty, badge, formatDate, submitting, confirmAction, toast } from './ui.js';
 import { createKnowledgeLibrary, openKnowledgeFile } from './knowledge.js';
+import { createGroundingLibrary, openGroundingSource } from './grounding.js';
 
 const scopeLabels = { personal: '个人记忆', project_private: '项目内个人记忆', project_shared: '项目共享记忆' };
 const statusLabels = { active: '已生效', candidate: '待审核', inactive: '已停用', rejected: '未通过', conflict: '待确认冲突' };
@@ -9,7 +10,7 @@ const indexLabels = { ready: '语义索引就绪', queued: '索引处理中', fa
 export function openMemoryPanel(options) {
     const { user, project, conversationId, onSource } = options;
     let scope = options.initialScope || 'personal';
-    let section = options.initialSection === 'files' ? 'files' : 'memories';
+    let section = ['files', 'facts'].includes(options.initialSection) ? options.initialSection : 'memories';
     if (scope !== 'personal' && !project) scope = 'personal';
     const tabs = el('div', { className: 'panel-tabs', role: 'group', 'aria-label': '记忆范围' });
     const search = input('查找记忆', { type: 'search', placeholder: '搜索偏好、项目事实或关键词', maxlength: 200 });
@@ -24,22 +25,25 @@ export function openMemoryPanel(options) {
     const memoriesContent = el('div', { className: 'stack' }, el('div', { className: 'row-between' }, filter.wrapper, adding), searchForm, errors, result, jobs);
     const reopenFiles = () => openMemoryPanel({ ...options, initialScope: scope, initialSection: 'files' });
     const library = createKnowledgeLibrary({ user, project, scope, onFile: fileId => openKnowledgeFile({ fileId, onBack: reopenFiles }), onReopen: reopenFiles });
+    const reopenFacts = () => openMemoryPanel({ ...options, initialScope: scope, initialSection: 'facts' });
+    const grounding = createGroundingLibrary({ project, scope, onReopen: reopenFacts });
     const view = panel('记忆库', el('div', { className: 'stack' }, tabs, introduction,
-        sections, memoriesContent, library.element),
+        sections, memoriesContent, library.element, grounding.element),
         { subtitle: '记住工作细节，也让资料成为下一次讨论的背景。' });
     let requestVersion = 0;
-    view.dialog.addEventListener('close', () => library.dispose(), { once: true });
+    view.dialog.addEventListener('close', () => { requestVersion++; library.dispose(); grounding.dispose(); }, { once: true });
 
     function renderSections() {
-        sections.replaceChildren(...[{ value: 'memories', label: '记忆' }, { value: 'files', label: '资料文件' }].map(item => button(item.label, () => {
+        sections.replaceChildren(...[{ value: 'memories', label: '记忆' }, { value: 'files', label: '资料文件' }, { value: 'facts', label: '事实与确认' }].map(item => button(item.label, () => {
             section = item.value;
             requestVersion++;
             renderSections();
             if (section === 'memories') load();
-        }, { className: 'chip' + (section === item.value ? ' active' : ''), 'aria-pressed': String(section === item.value), glyph: item.value === 'files' ? 'folder' : 'memory' })));
+        }, { className: 'chip' + (section === item.value ? ' active' : ''), 'aria-pressed': String(section === item.value), glyph: item.value === 'files' ? 'folder' : item.value === 'facts' ? 'shield' : 'memory' })));
         memoriesContent.hidden = section !== 'memories';
-        introduction.hidden = section === 'files';
+        introduction.hidden = section !== 'memories';
         library.setActive(section === 'files');
+        grounding.setActive(section === 'facts');
     }
 
     function renderTabs() {
@@ -56,6 +60,7 @@ export function openMemoryPanel(options) {
                 ? '这些记忆只用于你在「' + project.name + '」的讨论，不跨项目使用；系统管理员可审计。'
                 : '共享记忆属于「' + project.name + '」。候选由项目管理员审核，确认后其他项目成员才能使用。'));
         library.setScope(scope);
+        grounding.setScope(scope);
     }
 
     async function action(callback) {
@@ -82,6 +87,7 @@ export function openMemoryPanel(options) {
 
     async function load() {
         if (section === 'files') { await library.refresh(); return; }
+        if (section === 'facts') { await grounding.refresh(); return; }
         const version = ++requestVersion;
         result.replaceChildren(empty('正在读取记忆…'));
         errors.replaceChildren();
@@ -105,6 +111,9 @@ export function openMemoryPanel(options) {
     function renderMemory(memory) {
         const pending = ['candidate', 'conflict'].includes(memory.status);
         const actions = el('div', { className: 'card-actions' });
+        if (memory.status === 'active') actions.append(button('核对事实依据', () => openGroundingSource({
+            reference: { sourceType: 'memory', sourceId: memory.id, version: memory.version }, onBack: reopenFacts,
+        }), { glyph: 'shield' }));
         if (memory.canEdit) {
             actions.append(button('编辑', () => editMemory(memory), { glyph: 'edit' }));
             if (['active', 'inactive'].includes(memory.status)) actions.append(button(memory.status === 'active' ? '停用' : '启用', () => action(() => api('/api/memories/' + encodeURIComponent(memory.id), { method: 'PATCH', body: { active: memory.status !== 'active' } }))));
