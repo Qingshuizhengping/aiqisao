@@ -2,27 +2,19 @@ import { renderMarkdown } from '../../optimized/src/markdown.js';
 import { api, subscribeRun } from './api.js';
 import { openKnowledgeFile } from './knowledge.js';
 import { el, button, icon, notice, badge, toast, formatDate } from './ui.js';
+import { createDraftRepository, createDraftBinding } from './workspace-controller.js';
 
 const draftPrefix = 'weizhiyu-internal-draft:';
 const terminal = new Set(['completed', 'stopped', 'failed', 'interrupted']);
 const memoryNames = { personal: '个人记忆', project_private: '项目私有', project_shared: '项目共享' };
+export const drafts = createDraftRepository({ storage: () => sessionStorage });
 
 export function clearDrafts() {
-    try {
-        for (let index = sessionStorage.length - 1; index >= 0; index--) {
-            const key = sessionStorage.key(index);
-            if (key?.startsWith(draftPrefix)) sessionStorage.removeItem(key);
-        }
-        sessionStorage.removeItem('weizhiyu-internal-draft-owner');
-    } catch {}
+    drafts.clear();
 }
 
 export function activateDraftOwner(userId) {
-    try {
-        const previous = sessionStorage.getItem('weizhiyu-internal-draft-owner');
-        if (previous && previous !== userId) clearDrafts();
-        sessionStorage.setItem('weizhiyu-internal-draft-owner', userId);
-    } catch {}
+    drafts.activate(userId);
 }
 
 function draftKey(userId, conversationId, projectId) {
@@ -74,7 +66,7 @@ export function messageView(message, { onMemory, audit = false } = {}) {
     return { element, update };
 }
 
-export function createChatView({ user, project, onSend, onStop, onMemoryChange, onMemory }) {
+export function createChatView({ user, project, onSend, onStop, onMemory }) {
     const list = el('div', { className: 'messages-inner' });
     const scroller = el('div', { className: 'messages-scroll', tabindex: 0, 'aria-label': '聊天记录' }, list);
     const errors = el('div', { className: 'composer-error' });
@@ -90,7 +82,9 @@ export function createChatView({ user, project, onSend, onStop, onMemoryChange, 
     let conversation = null;
     let activeRun = null;
     let busy = false;
+    let disposed = false;
     let lastKey;
+    const draftBinding = createDraftBinding(drafts);
     let renderFrame;
 
     function resize() {
@@ -99,7 +93,7 @@ export function createChatView({ user, project, onSend, onStop, onMemoryChange, 
     }
     function storeDraft() {
         if (!lastKey) return;
-        try { textarea.value ? sessionStorage.setItem(lastKey, textarea.value) : sessionStorage.removeItem(lastKey); } catch {}
+        draftBinding.write(textarea.value);
     }
     textarea.addEventListener('input', () => { storeDraft(); resize(); updateControls(); });
     textarea.addEventListener('keydown', event => {
@@ -111,11 +105,10 @@ export function createChatView({ user, project, onSend, onStop, onMemoryChange, 
     compose.addEventListener('submit', event => { event.preventDefault(); if (!activeRun) submit(); });
     async function submit() {
         const content = textarea.value.trim();
-        if (!content || busy || activeRun || conversation?.readOnly || project?.archived) return;
+        if (disposed || !content || busy || activeRun || conversation?.readOnly || project?.archived) return;
         busy = true; updateControls(); errors.replaceChildren();
         try {
-            if (conversation?.memoryEnabled === false && onMemoryChange) conversation = await onMemoryChange(conversation, true);
-            await onSend(content, true);
+            await onSend({ content, draft: draftBinding.capture(textarea.value) });
         }
         catch (error) { if (error.code !== 'STALE_RESPONSE') showError(error.message); }
         finally { busy = false; updateControls(); }
@@ -147,7 +140,7 @@ export function createChatView({ user, project, onSend, onStop, onMemoryChange, 
         conversation = value;
         activeRun = run && !terminal.has(run.state) ? run : null;
         lastKey = draftKey(user.id, value?.id, project?.id);
-        try { textarea.value = sessionStorage.getItem(lastKey) || ''; } catch { textarea.value = ''; }
+        textarea.value = draftBinding.load(lastKey);
         views.clear(); list.replaceChildren();
         if (!messages.length) list.append(welcome());
         for (const message of messages) upsert(message, false);
@@ -169,10 +162,12 @@ export function createChatView({ user, project, onSend, onStop, onMemoryChange, 
     }
     return { scroller, region, setConversation, upsert, showError,
         setRun(run) { activeRun = run && !terminal.has(run.state) ? run : null; updateControls(); },
+        setBusy(value) { busy = value; updateControls(); },
+        confirmDraft(draft) { if (draftBinding.confirm(draft)) { textarea.value = ''; resize(); updateControls(); } },
         clearDraft() { textarea.value = ''; storeDraft(); resize(); updateControls(); },
         setUser(value) { user = value; updateControls(); },
         focus() { textarea.focus(); },
-        dispose() { storeDraft(); cancelAnimationFrame(renderFrame); },
+        dispose() { storeDraft(); disposed = true; cancelAnimationFrame(renderFrame); },
     };
 }
 
