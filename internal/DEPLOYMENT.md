@@ -127,6 +127,8 @@ node scripts/restore-check.mjs --input /path/to/internal-TIMESTAMP-UUID.sqlite -
 
 ## 升级与回滚
 
+XLSX 列坐标解析修复附带 `npm run repair:xlsx -- --database /opt/ai-qisao-internal/data/internal.sqlite --receipt-directory /opt/ai-qisao-internal/data/maintenance-receipts`。先做一致性备份并停止应用，再以服务用户运行该命令，完成后启动应用处理新排队的索引。命令本身只本地解析，不请求模型；索引由应用按既有配置处理。逐文件事务保留原件、更新版本及分段，失败文件保留旧内容，删除文件跳过、归档项目延后；私有收据记录摘要、版本和结果，支持重复执行与中断恢复。命令退出非零时先检查受限收据再重试，不用旧数据库覆盖新增业务数据。当前发布脚本已在切换后、启动新服务前执行该步骤。
+
 本次服务器发布脚本为 `scripts/publish-server.sh`，通过既有 SSH 连接在服务器执行。其参数是 `/tmp/aiqisao-employee-COMMIT.tgz`，由对应提交执行 `git archive --format=tar.gz --output=release.tgz COMMIT internal optimized/src` 生成并上传。脚本校验归档路径、可信 IP 证书和端口，使用专用用户安装依赖、运行测试及构建，等待后台任务结束、备份数据库与旧配置，再切换版本、精确更新 HTTPS Origin 并重启 PM2。失败时恢复旧代码、环境和 6069 站点配置；不会覆盖持久数据库或输出模型凭据。
 
 服务器目标为既有 `/opt/ai-qisao-internal`、`qisao-internal` 用户和 `ai-qisao-internal` PM2 进程；首次部署需先完成账户、服务环境文件、数据库、可信 IP 证书与定时备份设置。脚本不自动获取阿里云账号权限或绕过云安全组。发布后应从外部网络验证 6069 可达、完整 TLS 验证通过以及匿名 API 被拒绝。

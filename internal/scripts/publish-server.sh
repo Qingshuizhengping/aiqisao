@@ -138,6 +138,11 @@ chmod 0644 "$nginx_file"
 nginx -t
 ln -s "$next" "$base/current.next-$$"
 mv -Tf "$base/current.next-$$" "$base/current"
+pm2 stop ai-qisao-internal >/dev/null
+cd "$next/internal"
+runuser -u qisao-internal -- node scripts/repair-xlsx.mjs \
+    --database "$base/data/internal.sqlite" \
+    --receipt-directory "$base/data/maintenance-receipts" > "$base/xlsx-repair-latest.json"
 env NODE_ENV=production INTERNAL_ORIGIN="$origin" INTERNAL_HOST=127.0.0.1 INTERNAL_PORT=3001 pm2 restart ai-qisao-internal --update-env >/dev/null
 healthy=0
 for attempt in $(seq 1 25); do

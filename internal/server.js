@@ -14,7 +14,7 @@ import { createChatService } from './lib/chat.js';
 import { createProvider } from './lib/provider.js';
 import { AppError } from './lib/errors.js';
 
-export const VERSION = 'internal-v20261028-6';
+export const VERSION = 'internal-v20261029-1';
 
 export function createApplication({ config, database, provider: suppliedProvider } = {}) {
     config ||= createConfig();
