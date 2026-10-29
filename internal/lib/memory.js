@@ -1,7 +1,7 @@
 import express from 'express';
 import { randomUUID } from 'node:crypto';
 import { fail } from './errors.js';
-import { audit, projectRole, publicUser, requireProjectMember, requireProjectAdmin } from './access.js';
+import { audit, projectRole, publicUser, requireProjectMember, requireProjectAdmin, requireReadyEmployee, requireProjectContext } from './access.js';
 import { MEMORY_SCOPES, contentValue, normalized, sensitive, fingerprint, scopeKey, controlRevision,
     bumpControl, vectorBuffer, readVector, initializeMemorySchema, insertMemory } from './memory-store.js';
 
@@ -41,20 +41,12 @@ export function createMemoryService({ db, config, provider }) {
     const queryCache = new Map();
 
     function employee(user) {
-        const row = user?.id && db.prepare('SELECT * FROM users WHERE id=? AND active=1').get(user.id);
-        if (!row) fail(401, 'AUTH_REQUIRED', '请重新登录。');
-        const actor = publicUser(row, db);
-        if (actor.mustChangePassword) fail(428, 'PASSWORD_CHANGE_REQUIRED', '请先修改初始密码。');
-        if (actor.mfaRequired && !actor.mfaEnabled) fail(428, 'MFA_SETUP_REQUIRED', '请先设置管理员二次验证。');
-        return row;
+        return requireReadyEmployee(db, user).row;
     }
 
     function project(user, projectId, write = false) {
-        const role = requireProjectMember(db, user, projectId);
-        const row = db.prepare('SELECT * FROM projects WHERE id=?').get(projectId);
-        if (!row) fail(404, 'PROJECT_NOT_FOUND', '项目不存在。');
-        if (write && row.archived) fail(409, 'PROJECT_ARCHIVED', '归档项目为只读，不能修改记忆。');
-        return { ...row, role };
+        const context = requireProjectContext(db, user, projectId, { write, archivedMessage: '归档项目为只读，不能修改记忆。' });
+        return { ...context.project, role: context.role };
     }
 
     function visible(row, user) {

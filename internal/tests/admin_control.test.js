@@ -262,3 +262,45 @@ test('deleted accounts cannot receive project grants and archived project member
     assert.equal(denied.status, 409);
     assert.equal(denied.body.error.code, 'USER_DELETED');
 });
+
+test('project administrators can remove disabled or deleted former administrators without bypassing live-admin protection', async context => {
+    const setup = await fixture(context);
+    const admin = setup.employee('control-admin', 'admin');
+    const owner = setup.employee('project-owner');
+    for (const lifecycle of ['disabled', 'deleted']) {
+        const former = setup.employee('former-' + lifecycle);
+        const project = (await owner.call('POST', '/api/projects', { name: lifecycle + ' administrator handover' })).body.project;
+        assert.equal((await owner.call('PUT', '/api/projects/' + project.id + '/members/' + former.id, { role: 'admin' })).status, 200);
+        const changed = lifecycle === 'disabled'
+            ? await admin.call('PATCH', '/api/admin/users/' + former.id, { active: false })
+            : await admin.call('DELETE', '/api/admin/users/' + former.id);
+        assert.equal(changed.status, 200, JSON.stringify(changed.body));
+        const removed = await owner.call('DELETE', '/api/projects/' + project.id + '/members/' + former.id);
+        assert.equal(removed.status, 200, JSON.stringify(removed.body));
+        assert.equal(setup.db.prepare('SELECT role FROM project_members WHERE project_id=? AND user_id=?').get(project.id, former.id), undefined);
+        for (const result of [
+            await owner.call('DELETE', '/api/projects/' + project.id + '/members/' + owner.id),
+            await owner.call('PUT', '/api/projects/' + project.id + '/members/' + owner.id, { role: 'member' }),
+            await admin.call('DELETE', '/api/admin/users/' + owner.id + '/projects/' + project.id),
+            await admin.call('PUT', '/api/admin/users/' + owner.id + '/projects/' + project.id, { role: 'member' }),
+        ]) {
+            assert.equal(result.status, 409, JSON.stringify(result.body));
+            assert.equal(result.body.error.code, 'LAST_PROJECT_ADMIN');
+        }
+    }
+});
+
+test('central controls can revoke disabled project administrators while deleted-user mutations retain their lifecycle contract', async context => {
+    const setup = await fixture(context);
+    const admin = setup.employee('control-admin', 'admin');
+    const owner = setup.employee('project-owner');
+    const former = setup.employee('former-admin');
+    const project = (await owner.call('POST', '/api/projects', { name: 'Central handover' })).body.project;
+    assert.equal((await admin.call('PUT', '/api/admin/users/' + former.id + '/projects/' + project.id, { role: 'admin' })).status, 200);
+    assert.equal((await admin.call('PATCH', '/api/admin/users/' + former.id, { active: false })).status, 200);
+    assert.equal((await admin.call('DELETE', '/api/admin/users/' + former.id + '/projects/' + project.id)).status, 200);
+    assert.equal((await admin.call('DELETE', '/api/admin/users/' + former.id)).status, 200);
+    const deletedMutation = await admin.call('DELETE', '/api/admin/users/' + former.id + '/projects/' + project.id);
+    assert.equal(deletedMutation.status, 409);
+    assert.equal(deletedMutation.body.error.code, 'USER_DELETED');
+});

@@ -1,6 +1,6 @@
 import express from 'express';
 import { randomUUID } from 'node:crypto';
-import { audit, projectRole, requireProjectAdmin, requireProjectMember } from './access.js';
+import { audit, assertProjectAdminRemovable, projectRole, requireProjectAdmin, requireProjectContext, requireProjectMember } from './access.js';
 import { fail } from './errors.js';
 
 function objectInput(value, allowed) {
@@ -26,17 +26,7 @@ export function createProjectsRouter({ db }) {
 
     function editableProject(user, id) {
         requireProjectAdmin(db, user, id);
-        const row = db.prepare('SELECT * FROM projects WHERE id=?').get(id);
-        if (row.archived) fail(409, 'PROJECT_ARCHIVED', '项目已归档，当前为只读。');
-        return row;
-    }
-
-    function protectFinalAdmin(projectId, userId, nextRole) {
-        const membership = db.prepare('SELECT role FROM project_members WHERE project_id=? AND user_id=?').get(projectId, userId);
-        if (membership?.role !== 'admin' || nextRole === 'admin') return;
-        const count = db.prepare(`SELECT COUNT(*) AS count FROM project_members membership JOIN users employee ON employee.id=membership.user_id
-            WHERE membership.project_id=? AND membership.role='admin' AND employee.active=1`).get(projectId).count;
-        if (count <= 1) fail(409, 'LAST_PROJECT_ADMIN', '请先指定另一位项目管理员。');
+        return requireProjectContext(db, user, id, { write: true }).project;
     }
 
     router.get('/', (request, response, next) => {
@@ -69,7 +59,7 @@ export function createProjectsRouter({ db }) {
     router.patch('/:id', (request, response, next) => {
         try {
             requireProjectAdmin(db, request.user, request.params.id);
-            const row = db.prepare('SELECT * FROM projects WHERE id=?').get(request.params.id);
+            const { project: row } = requireProjectContext(db, request.user, request.params.id);
             const input = objectInput(request.body, ['name', 'description', 'instructions', 'archived']);
             if (!Object.keys(input).length) fail(400, 'INVALID_PROJECT_INPUT', '请提供要修改的内容。');
             if (input.archived !== undefined && typeof input.archived !== 'boolean') fail(400, 'INVALID_PROJECT_INPUT', '归档设置无效。');
@@ -105,7 +95,7 @@ export function createProjectsRouter({ db }) {
             if (!['admin', 'member'].includes(input.role)) fail(400, 'INVALID_PROJECT_ROLE', '项目角色无效。');
             if (!db.prepare('SELECT id FROM users WHERE id=? AND active=1').get(request.params.userId)) fail(404, 'USER_NOT_FOUND', '该成员不存在或已停用。');
             db.transaction(() => {
-                protectFinalAdmin(request.params.id, request.params.userId, input.role);
+                assertProjectAdminRemovable(db, request.params.id, request.params.userId, input.role);
                 db.prepare(`INSERT INTO project_members(project_id,user_id,role,created_at) VALUES(?,?,?,?)
                     ON CONFLICT(project_id,user_id) DO UPDATE SET role=excluded.role`)
                     .run(request.params.id, request.params.userId, input.role, Date.now());
@@ -120,7 +110,7 @@ export function createProjectsRouter({ db }) {
         try {
             editableProject(request.user, request.params.id);
             db.transaction(() => {
-                protectFinalAdmin(request.params.id, request.params.userId, null);
+                assertProjectAdminRemovable(db, request.params.id, request.params.userId, null);
                 db.prepare('DELETE FROM project_members WHERE project_id=? AND user_id=?').run(request.params.id, request.params.userId);
                 db.prepare('UPDATE projects SET updated_at=? WHERE id=?').run(Date.now(), request.params.id);
                 audit(db, request.user, 'project.member_remove', 'project', request.params.id, { userId: request.params.userId });

@@ -1,6 +1,6 @@
 import express from 'express';
 import { randomUUID } from 'node:crypto';
-import { audit, publicUser, requireSystemAdmin } from './access.js';
+import { audit, assertProjectAdminRemovable, publicUser, requireSystemAdmin } from './access.js';
 import { asyncRoute, fail } from './errors.js';
 import { hashPassword, validatePassword, validateUsername } from './auth.js';
 
@@ -92,12 +92,10 @@ export function createAdminRouter({ db }) {
             }
         }
         if (row.active && !nextActive) {
-            const soleProject = db.prepare(`SELECT membership.project_id FROM project_members membership JOIN projects project ON project.id=membership.project_id
+            const projects = db.prepare(`SELECT membership.project_id FROM project_members membership JOIN projects project ON project.id=membership.project_id
                 WHERE membership.user_id=? AND membership.role='admin' AND project.archived=0
-                AND NOT EXISTS(SELECT 1 FROM project_members other JOIN users employee ON employee.id=other.user_id
-                    WHERE other.project_id=membership.project_id AND other.role='admin' AND other.user_id<>membership.user_id
-                    AND employee.active=1 AND employee.deleted_at IS NULL) LIMIT 1`).get(row.id);
-            if (soleProject) fail(409, 'LAST_PROJECT_ADMIN', '该成员仍是项目的唯一管理员，请先完成项目交接。');
+                ORDER BY membership.project_id`).all(row.id);
+            for (const project of projects) assertProjectAdminRemovable(db, project.project_id, row.id, null);
         }
     }
 
@@ -106,14 +104,6 @@ export function createAdminRouter({ db }) {
         if (!row) fail(404, 'PROJECT_NOT_FOUND', '项目不存在。');
         if (row.archived) fail(409, 'PROJECT_ARCHIVED', '项目已归档，当前为只读。');
         return row;
-    }
-
-    function protectProjectAdmin(projectId, user, nextRole) {
-        const membership = db.prepare('SELECT role FROM project_members WHERE project_id=? AND user_id=?').get(projectId, user.id);
-        if (!user.active || membership?.role !== 'admin' || nextRole === 'admin') return;
-        const count = db.prepare(`SELECT COUNT(*) AS count FROM project_members membership JOIN users employee ON employee.id=membership.user_id
-            WHERE membership.project_id=? AND membership.role='admin' AND employee.active=1 AND employee.deleted_at IS NULL`).get(projectId).count;
-        if (count <= 1) fail(409, 'LAST_PROJECT_ADMIN', '请先指定另一位有效的项目管理员。');
     }
 
     function filteredUsers(query) {
@@ -283,7 +273,7 @@ export function createAdminRouter({ db }) {
             editableProject(request.params.projectId);
             db.transaction(() => {
                 currentAdmin(request);
-                protectProjectAdmin(request.params.projectId, row, input.role);
+                assertProjectAdminRemovable(db, request.params.projectId, row.id, input.role);
                 const now = Date.now();
                 db.prepare(`INSERT INTO project_members(project_id,user_id,role,created_at) VALUES(?,?,?,?)
                     ON CONFLICT(project_id,user_id) DO UPDATE SET role=excluded.role`).run(request.params.projectId, row.id, input.role, now);
@@ -300,7 +290,7 @@ export function createAdminRouter({ db }) {
             editableProject(request.params.projectId);
             db.transaction(() => {
                 currentAdmin(request);
-                protectProjectAdmin(request.params.projectId, row, null);
+                assertProjectAdminRemovable(db, request.params.projectId, row.id, null);
                 const changed = db.prepare('DELETE FROM project_members WHERE project_id=? AND user_id=?').run(request.params.projectId, row.id);
                 if (changed.changes) {
                     db.prepare('UPDATE projects SET updated_at=? WHERE id=?').run(Date.now(), request.params.projectId);
