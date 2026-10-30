@@ -1,10 +1,8 @@
 import { renderMarkdown } from '../../optimized/src/markdown.js';
 import { api, subscribeRun } from './api.js';
-import { openKnowledgeFile } from './knowledge.js';
 import { el, button, icon, notice, badge, toast, formatDate } from './ui.js';
 import { createDraftRepository, createDraftBinding } from './workspace-controller.js';
-import { groundingPresentation, sourceIdentity, citationNumber, answerVisibleContent } from './grounding-state.js';
-import { openGroundingSource } from './grounding.js';
+import { groundingPresentation, citationNumber, answerVisibleContent } from './grounding-state.js';
 
 const draftPrefix = 'weizhiyu-internal-draft:';
 const terminal = new Set(['completed', 'stopped', 'failed', 'interrupted']);
@@ -23,7 +21,7 @@ function draftKey(userId, conversationId, projectId) {
     return draftPrefix + userId + ':' + (conversationId || 'new-' + (projectId || 'personal'));
 }
 
-export function messageView(message, { onMemory, audit = false } = {}) {
+export function messageView(message, { audit = false } = {}) {
     const body = el('div', { className: 'message-body' });
     const tools = el('div', { className: 'message-tools' });
     const column = el('div', { className: 'message-column' },
@@ -51,25 +49,22 @@ export function messageView(message, { onMemory, audit = false } = {}) {
         tools.replaceChildren(...[
             value.status === 'generating' && el('span', { className: 'generating-dot', 'aria-hidden': 'true' }),
             state && el('span', { className: 'message-state', role: 'status', text: state }),
-            grounding.status && badge(grounding.status, grounding.tone),
+            audit && grounding.status && badge(grounding.status, grounding.tone),
             visibleContent && button('复制', async () => {
                 try { await navigator.clipboard.writeText(answerVisibleContent(message, { audit })); toast('回答已复制。'); }
                 catch { toast('浏览器未允许复制，请长按文字选择。', 'error'); }
             }, { className: 'button quiet', glyph: 'copy' }),
-            value.metadata?.memoryDegraded && badge('记忆检索暂时降级', 'warning'),
-            memories.length > 0 && el('div', { className: 'memory-reference-list', 'aria-label': '本次回答引用的记忆' }, ...memories.map(memory =>
-                onMemory && !audit ? button(memoryNames[memory.scope] || '引用记忆', () => onMemory(memory), { className: 'chip', glyph: 'memory', title: memory.content }) :
-                    el('span', { className: 'chip', title: memory.content, text: memoryNames[memory.scope] || '引用记忆' }))),
-            value.metadata?.knowledgeDegraded && badge('资料检索暂时降级', 'warning'),
-            files.length > 0 && el('div', { className: 'knowledge-reference-list', 'aria-label': '本次回答参考的资料文件' }, el('span', { className: 'reference-label', text: '资料来源' }),
-                ...Array.from(new Map(files.map(file => [file.fileId || file.id, file])).values()).map(file => audit
-                    ? el('span', { className: 'chip', text: file.filename || file.name || '资料文件', title: file.content })
-                    : button(file.filename || file.name || '资料文件', () => openKnowledgeFile({ fileId: file.fileId || file.id }), { className: 'chip', glyph: 'folder', title: file.filename || file.name || '查看资料' }))),
-            grounding.citations.length > 0 && el('div', { className: 'grounding-reference-list', 'aria-label': '逐项核验依据' },
+            audit && value.metadata?.memoryDegraded && badge('记忆检索暂时降级', 'warning'),
+            audit && memories.length > 0 && el('div', { className: 'memory-reference-list', 'aria-label': '本次回答引用的记忆' }, ...memories.map(memory =>
+                el('span', { className: 'chip', title: memory.content, text: memoryNames[memory.scope] || '引用记忆' }))),
+            audit && value.metadata?.knowledgeDegraded && badge('资料检索暂时降级', 'warning'),
+            audit && files.length > 0 && el('div', { className: 'knowledge-reference-list', 'aria-label': '本次回答参考的资料文件' }, el('span', { className: 'reference-label', text: '资料来源' }),
+                ...Array.from(new Map(files.map(file => [file.fileId || file.id, file])).values()).map(file =>
+                    el('span', { className: 'chip', text: file.filename || file.name || '资料文件', title: file.content }))),
+            audit && grounding.citations.length > 0 && el('div', { className: 'grounding-reference-list', 'aria-label': '逐项核验依据' },
                 ...grounding.citations.map((citation, index) => {
                     const label = '[' + citationNumber(citation, index) + '] ' + (citation.title || '事实来源');
-                    return audit || !sourceIdentity(citation) ? el('span', { className: 'chip', text: label })
-                        : button(label, () => openGroundingSource({ reference: citation }), { className: 'chip', glyph: 'shield', title: '核对来源版本与原文' });
+                    return el('span', { className: 'chip', text: label });
                 })),
             audit && el('small', { text: formatDate(value.createdAt) })].filter(child => child !== false && child !== undefined && child !== null));
     }

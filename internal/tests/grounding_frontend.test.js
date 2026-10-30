@@ -12,17 +12,22 @@ test('fact forms preserve explicit conditions and effective dates and label expi
     assert.equal(factPeriodLabel(value, '2026-10-29'), '有效期已过');
     assert.equal(factPeriodLabel(value, '2024-12-31'), '尚未生效');
     assert.match(factPeriodLabel(value, '2025-06-01'), /2025-01-01.*2025-12-31/);
-    assert.equal(groundingPresentation({role:'assistant',metadata:{grounding:{status:'verified',basis:'user_input'}}}).status, '已核对原文');
+    assert.equal(groundingPresentation({role:'assistant',metadata:{grounding:{status:'verified',basis:'user_input'}}}).status, '');
+    assert.equal(groundingPresentation({role:'assistant',metadata:{grounding:{status:'verified',basis:'user_input'}}},{audit:true}).status, '已核对原文');
 });
 
 test('grounding progress keeps pending drafts unpublished and distinguishes verified, conflict and unavailable responses', () => {
     const pending = groundingPresentation({ role: 'assistant', status: 'generating', content: 'unverified draft', metadata: { grounding: { stage: 'verifying', status: 'pending' } } });
     assert.equal(pending.pending, true);
-    assert.equal(pending.progress, '正在核对依据…');
+    assert.equal(pending.progress, '正在整理思路…');
+    assert.equal(groundingPresentation({role:'assistant',metadata:{grounding:{stage:'verifying',status:'pending'}}},{audit:true}).progress,'正在核对依据…');
     assert.equal(pending.status, '');
     for (const [status, label] of [['verified', '已核验'], ['partial', '部分内容已核验'], ['insufficient', '依据不足'], ['conflict', '资料冲突'], ['unavailable', '暂时无法核实']]) {
-        const value = groundingPresentation({ role: 'assistant', metadata: { grounding: { stage: 'complete', status } } });
-        assert.equal(value.pending, false); assert.equal(value.status, label);
+        const message = { role: 'assistant', metadata: { grounding: { stage: 'complete', status, citations:[{id:'reference',number:1}] } } };
+        const value = groundingPresentation(message);
+        assert.equal(value.pending, false); assert.equal(value.status, ''); assert.deepEqual(value.citations,[]);
+        const audit = groundingPresentation(message,{audit:true});
+        assert.equal(audit.status,label); assert.equal(audit.citations.length,1);
     }
     assert.equal(groundingPresentation({ role: 'user', metadata: { grounding: { status: 'pending' } } }).pending, false);
     assert.deepEqual(groundingPresentation({ role: 'assistant' }).citations, []);

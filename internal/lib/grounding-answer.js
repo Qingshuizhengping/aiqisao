@@ -1,6 +1,7 @@
 import { sensitive } from './memory-store.js';
 import { numbersPreserved } from './grounding-values.js';
 import { isInternalAnswerNotice, wantsSourceComparison, UNCONFIRMED_ANSWER } from '../shared/answer-presentation.js';
+import { PERSONA_GREETING, PERSONA_THANKS, PERSONA_IDENTITY } from './persona.js';
 
 const HARD_FIELDS = /价格|多少钱|价钱|价位|几块|几元|售价|单价|批发价|零售价|收费|费用|报价|用量|剂量|参数|规格|浓度|疗程|成分|有效期|保质期/;
 const POLICY = /制度|规定|政策|条款|规则|必须|禁止|应当|不得/;
@@ -124,7 +125,10 @@ export function createGroundedAnswerService({ db, provider, library, retrieval }
         const includeSourceComparison = wantsSourceComparison(query);
         if (sensitive(query)) return unavailable(base);
         if (/^(?:你好|您好|嗨|hello|hi|谢谢|感谢|早上好|下午好|晚上好)[！!。,.，\s]*$/i.test(query.trim())) {
-            return result('verified', /谢|感谢/.test(query) ? '不客气。需要查询资料时，我会先核对依据。' : '你好，我是AI七嫂·员工专属版。可以帮你查询已确认资料、整理工作问题。', { ...base, basis: 'conversation' });
+            return result('verified', /谢|感谢/.test(query) ? PERSONA_THANKS : PERSONA_GREETING, { ...base, basis: 'conversation' });
+        }
+        if (/^(?:你是谁|你叫什么(?:名字)?|介绍(?:一下)?你?自己|自我介绍(?:一下)?|你能做什么)[？?!！。\s]*$/.test(query.trim())) {
+            return result('verified', PERSONA_IDENTITY, { ...base, basis: 'conversation' });
         }
         const rewriteSeparator = /[:：\n“「]/.exec(query);
         const rewriting = /(?:润色|改写|翻译|校对|整理(?:下面|以下|这段))/.test(question) && Boolean(rewriteSeparator);
@@ -181,7 +185,9 @@ export function createGroundedAnswerService({ db, provider, library, retrieval }
         const inputEvidence = rewriting ? [{ id: 'user-input', content: rewriteInput, title: '本轮用户输入', sourceType: 'input' }] : evidence;
         onProgress({ stage: 'drafting', status: 'pending', citations: [] });
         try {
-            const draft = await provider.draftGrounded({ question: query, evidence: inputEvidence, facts, style: preference(user), includeSourceComparison }, { signal });
+            const draft = await provider.draftGrounded({ question: query, evidence: inputEvidence, facts, style: preference(user), includeSourceComparison }, {
+                signal, beforeRevision: () => isCurrent({ ...base, evidence, facts }),
+            });
             signal?.throwIfAborted();
             if (!isCurrent({ ...base, evidence, facts })) return unavailable(base);
             if (!only(draft, ['claims']) || !Array.isArray(draft.claims) || draft.claims.length > 12) return unavailable(base);

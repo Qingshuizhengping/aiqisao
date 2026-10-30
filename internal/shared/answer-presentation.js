@@ -39,3 +39,50 @@ export function presentAnswerText(text) {
     });
     return changed ? blocks.join('\n\n').trim() || UNCONFIRMED_ANSWER : original;
 }
+
+// The server appends " [n]" to an evidence-backed paragraph. Hide only that
+// suffix when its number is present in this message's citation metadata.
+// Brackets in source text are escaped by the answer builder; code, links,
+// list labels and numbers which are not citations must remain copyable.
+export function stripAnswerCitations(text, citationNumbers = []) {
+    const known = new Set(citationNumbers.filter(number => Number.isSafeInteger(number) && number > 0));
+    const original = String(text || '');
+    if (!known.size) return original;
+    let fence = null, inlineTicks = 0, htmlCode = null;
+    const projected = original.split(/(\r?\n)/).map(line => {
+        if (/^\r?\n$/.test(line)) return line;
+        const marker = /^ {0,3}(`{3,}|~{3,})(.*)$/.exec(line);
+        if (fence) {
+            if (marker && marker[1][0] === fence[0] && marker[1].length >= fence.length && !marker[2].trim()) fence = null;
+            return line;
+        }
+        if (marker && !inlineTicks) { fence = marker[1]; return line; }
+        if (htmlCode) {
+            if (new RegExp('</' + htmlCode + '\\s*>', 'i').test(line)) htmlCode = null;
+            return line;
+        }
+        const htmlOpen = /<(pre|code)\b/i.exec(line);
+        if (htmlOpen) {
+            if (!new RegExp('</' + htmlOpen[1] + '\\s*>', 'i').test(line)) htmlCode = htmlOpen[1];
+            return line;
+        }
+        if (/^(?: {4}|\t|\s*>)/.test(line)) return line;
+        const suffix = /(?:[ \t]+\[\d+\])+[ \t]*$/.exec(line);
+        let suffixInCode = Boolean(inlineTicks);
+        for (const ticks of line.matchAll(/(?<!\\)`+/g)) {
+            if (ticks.index >= (suffix?.index ?? line.length)) break;
+            if (!inlineTicks) inlineTicks = ticks[0].length;
+            else if (inlineTicks === ticks[0].length) inlineTicks = 0;
+            suffixInCode = Boolean(inlineTicks);
+        }
+        if (!suffix || suffixInCode) return line;
+        const prefix = line.slice(0, suffix.index);
+        if (/^(?:[-*+]|\d+[.)]|>)$/.test(prefix.trim())) return line;
+        const cleaned = suffix[0].replace(/[ \t]+\[(\d+)\]/g, (token, number) => known.has(Number(number)) ? '' : token);
+        if (cleaned === suffix[0]) return line;
+        const visible = prefix + cleaned.trimEnd();
+        return visible.trim() ? visible : null;
+    });
+    return projected.map((line, index) => line === null || /^\r?\n$/.test(line)
+        && (projected[index - 1] === null || index === projected.length - 2 && projected[index + 1] === null) ? '' : line).join('');
+}
