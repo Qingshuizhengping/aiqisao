@@ -33,7 +33,8 @@ export function presentAnswerText(text) {
         // Historical text is not re-verified here. Only omit a standalone
         // diagnostic paragraph; never cut a mixed business quote mid-paragraph.
         const plain = plainText(block);
-        if (!code && (omissionNotice.test(plain) || sourceNotice.test(plain))) { changed = true; return false; }
+        const singleNotice = sourceNotice.test(plain) && plain.split(/[。！？\n]/).filter(sentence => sentence.trim()).length === 1;
+        if (!code && (omissionNotice.test(plain) || singleNotice)) { changed = true; return false; }
         return true;
     });
     return changed ? blocks.join('\n\n').trim() || UNCONFIRMED_ANSWER : original;

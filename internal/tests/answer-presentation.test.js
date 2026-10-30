@@ -26,6 +26,8 @@ test('business conflict instructions, warehouse collisions and fenced examples r
     assert.equal(presentAnswerText(diagnostic+'\n\n'+footer),UNCONFIRMED_ANSWER);
     const mixed='门店先核对资料。 [1] '+diagnostic;
     assert.equal(presentAnswerText(mixed),mixed);
+    const reversed=diagnostic+' 门店先核对资料，再开展工作。 [1]';
+    assert.equal(presentAnswerText(reversed),reversed);
     assert.equal(isInternalAnswerNotice(mixed),true);
 });
 
