@@ -3,7 +3,7 @@ import { api, subscribeRun } from './api.js';
 import { openKnowledgeFile } from './knowledge.js';
 import { el, button, icon, notice, badge, toast, formatDate } from './ui.js';
 import { createDraftRepository, createDraftBinding } from './workspace-controller.js';
-import { groundingPresentation, sourceIdentity, citationNumber } from './grounding-state.js';
+import { groundingPresentation, sourceIdentity, citationNumber, answerVisibleContent } from './grounding-state.js';
 import { openGroundingSource } from './grounding.js';
 
 const draftPrefix = 'weizhiyu-internal-draft:';
@@ -34,8 +34,8 @@ export function messageView(message, { onMemory, audit = false } = {}) {
     let previousTools;
     function update(value) {
         message = value;
-        const grounding = groundingPresentation(value);
-        const visibleContent = grounding.pending ? '' : value.content || '';
+        const grounding = groundingPresentation(value, { audit });
+        const visibleContent = grounding.pending ? '' : answerVisibleContent(value, { audit });
         if (visibleContent !== previousContent) {
             if (value.role === 'user') body.textContent = visibleContent;
             else body.innerHTML = renderMarkdown(visibleContent);
@@ -53,7 +53,7 @@ export function messageView(message, { onMemory, audit = false } = {}) {
             state && el('span', { className: 'message-state', role: 'status', text: state }),
             grounding.status && badge(grounding.status, grounding.tone),
             visibleContent && button('复制', async () => {
-                try { await navigator.clipboard.writeText(message.content); toast('回答已复制。'); }
+                try { await navigator.clipboard.writeText(answerVisibleContent(message, { audit })); toast('回答已复制。'); }
                 catch { toast('浏览器未允许复制，请长按文字选择。', 'error'); }
             }, { className: 'button quiet', glyph: 'copy' }),
             value.metadata?.memoryDegraded && badge('记忆检索暂时降级', 'warning'),

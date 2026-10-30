@@ -1,5 +1,6 @@
 import { sensitive } from './memory-store.js';
 import { numbersPreserved } from './grounding-values.js';
+import { isInternalAnswerNotice, wantsSourceComparison, UNCONFIRMED_ANSWER } from '../shared/answer-presentation.js';
 
 const HARD_FIELDS = /价格|多少钱|价钱|价位|几块|几元|售价|单价|批发价|零售价|收费|费用|报价|用量|剂量|参数|规格|浓度|疗程|成分|有效期|保质期/;
 const POLICY = /制度|规定|政策|条款|规则|必须|禁止|应当|不得/;
@@ -100,7 +101,7 @@ export function createGroundedAnswerService({ db, provider, library, retrieval }
     }
 
     const unavailable = parameters => result('unavailable', '暂时无法核实资料，当前不提供确定的事实回答。请稍后重试，或在记忆库检查资料确认与索引状态。', parameters);
-    const insufficient = parameters => result('insufficient', '当前授权范围内没有找到足够的已确认依据，暂时无法确认。请补充相关资料，并在记忆库的“事实与确认”中完成确认。', parameters);
+    const insufficient = parameters => result('insufficient', UNCONFIRMED_ANSWER, parameters);
 
     function completeQuote(user, entry, text) {
         const content = typeof library.source === 'function'
@@ -120,6 +121,7 @@ export function createGroundedAnswerService({ db, provider, library, retrieval }
         signal?.throwIfAborted();
         const base = { user, projectId };
         const question = normalize(query);
+        const includeSourceComparison = wantsSourceComparison(query);
         if (sensitive(query)) return unavailable(base);
         if (/^(?:你好|您好|嗨|hello|hi|谢谢|感谢|早上好|下午好|晚上好)[！!。,.，\s]*$/i.test(query.trim())) {
             return result('verified', /谢|感谢/.test(query) ? '不客气。需要查询资料时，我会先核对依据。' : '你好，我是AI七嫂·员工专属版。可以帮你查询已确认资料、整理工作问题。', { ...base, basis: 'conversation' });
@@ -149,10 +151,11 @@ export function createGroundedAnswerService({ db, provider, library, retrieval }
         }
         const conflicted = [...groups.values()].filter(group => new Set(group.map(fact => normalize(fact.value) + ':' + normalize(fact.unit))).size > 1).flat();
         if (conflicted.length || found.conflicts?.some(entry => entry.type === 'conflicting_values')) {
+            if (!includeSourceComparison) return result('conflict', UNCONFIRMED_ANSWER, { ...base, evidence, facts, expanded: found.expanded });
             const conflictingIds = new Set((found.conflicts || []).flatMap(entry => entry.type === 'conflicting_values' ? entry.factIds || [] : []));
             const candidates = conflicted.length ? conflicted : facts.filter(fact => conflictingIds.has(fact.id));
             const citations = candidates.map(citationForFact);
-            return result('conflict', '发现不同值或适用条件的资料记录，暂不选择其中一个值：\n\n' + candidates.map((fact, index) => `- ${escape(factText(fact))} [${index + 1}]`).join('\n') + '\n\n请先明确适用条件，或由有权限的人员确认有效版本。', { ...base, evidence, facts, citations, expanded: found.expanded });
+            return result('conflict', candidates.map((fact, index) => `- ${escape(factText(fact))} [${index + 1}]`).join('\n'), { ...base, evidence, facts, citations, expanded: found.expanded, basis: 'source_comparison' });
         }
         if (HARD_FIELDS.test(question) || found.requiresFacts || missingFields.length) {
             if (!related.length) return result('insufficient', '当前没有足够的已确认依据，暂时无法确认。'
@@ -178,7 +181,7 @@ export function createGroundedAnswerService({ db, provider, library, retrieval }
         const inputEvidence = rewriting ? [{ id: 'user-input', content: rewriteInput, title: '本轮用户输入', sourceType: 'input' }] : evidence;
         onProgress({ stage: 'drafting', status: 'pending', citations: [] });
         try {
-            const draft = await provider.draftGrounded({ question: query, evidence: inputEvidence, facts, style: preference(user) }, { signal });
+            const draft = await provider.draftGrounded({ question: query, evidence: inputEvidence, facts, style: preference(user), includeSourceComparison }, { signal });
             signal?.throwIfAborted();
             if (!isCurrent({ ...base, evidence, facts })) return unavailable(base);
             if (!only(draft, ['claims']) || !Array.isArray(draft.claims) || draft.claims.length > 12) return unavailable(base);
@@ -187,6 +190,7 @@ export function createGroundedAnswerService({ db, provider, library, retrieval }
                 if (!only(claim, ['id', 'kind', 'text', 'evidenceIds', 'quote', 'factId']) || typeof claim.id !== 'string' || !/^[a-zA-Z0-9_-]{1,48}$/.test(claim.id)
                     || ids.has(claim.id) || !['summary', 'quote', 'fact'].includes(claim.kind) || typeof claim.text !== 'string' || claim.text.length > 1200) return unavailable(base);
                 ids.add(claim.id);
+                if (!rewriting && !includeSourceComparison && isInternalAnswerNotice(claim.text)) continue;
                 if (claim.kind === 'fact') {
                     const fact = byFacts.get(claim.factId);
                     if (fact) valid.push({ ...claim, text: factText(fact), fact });
@@ -209,7 +213,7 @@ export function createGroundedAnswerService({ db, provider, library, retrieval }
             if (!valid.length) return insufficient({ ...base, evidence, facts });
             onProgress({ stage: 'verifying', status: 'pending', citations: [] });
             const checked = await provider.verifyGrounded({ question: query, evidence: inputEvidence, facts,
-                claims: valid.map(({ fact, ...claim }) => claim), mode: rewriting ? 'rewrite_without_new_facts' : 'facts_only' }, { signal });
+                claims: valid.map(({ fact, ...claim }) => claim), mode: rewriting ? 'rewrite_without_new_facts' : 'facts_only', includeSourceComparison }, { signal });
             signal?.throwIfAborted();
             if (!isCurrent({ ...base, evidence, facts })) return unavailable(base);
             if (!only(checked, ['verdicts']) || !Array.isArray(checked.verdicts) || checked.verdicts.length !== valid.length) return unavailable(base);
@@ -236,8 +240,8 @@ export function createGroundedAnswerService({ db, provider, library, retrieval }
                 claims.push({ id: claim.id, citationIds: references.map(reference => reference.id) });
             }
             const partial = supported.length !== draft.claims.length;
-            return result(partial ? 'partial' : 'verified', lines.join('\n\n') + (partial ? '\n\n部分内容缺少充分依据，已省略。' : ''),
-                { ...base, evidence, facts, citations, claims, expanded: found.expanded, basis: rewriting ? 'user_input' : 'confirmed_sources' });
+            return result(partial ? 'partial' : 'verified', lines.join('\n\n'),
+                { ...base, evidence, facts, citations, claims, expanded: found.expanded, basis: rewriting ? 'user_input' : includeSourceComparison ? 'source_comparison' : 'confirmed_sources' });
         } catch (error) {
             if (signal?.aborted) throw error;
             return unavailable(base);

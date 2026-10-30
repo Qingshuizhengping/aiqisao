@@ -1,15 +1,25 @@
 import { createLifecycleOwner } from './selection-lifecycle.js';
+import { presentAnswerText } from '../shared/answer-presentation.js';
 
 export const groundingStages = { retrieving: '正在查找资料…', drafting: '正在整理有据内容…', verifying: '正在核对依据…' };
 export const groundingStatuses = { verified: '已核验', partial: '部分内容已核验', insufficient: '依据不足', conflict: '资料冲突', unavailable: '暂时无法核实' };
 
-export function groundingPresentation(message) {
+export function answerVisibleContent(message, { audit = false } = {}) {
+    const value = message?.content || '';
+    return !audit && message?.role === 'assistant' && message.metadata?.grounding
+        && !['user_input', 'source_comparison'].includes(message.metadata.grounding.basis) ? presentAnswerText(value) : value;
+}
+
+export function groundingPresentation(message, options = {}) {
     const grounding = message?.metadata?.grounding;
+    const visible = answerVisibleContent(message, options);
+    const changed = visible !== (message?.content || '');
+    const referenced = new Set([...visible.matchAll(/\[(\d+)\]/g)].map(match => Number(match[1])));
     return { pending: message?.role !== 'user' && grounding?.status === 'pending',
         progress: groundingStages[grounding?.stage] || '正在核对依据…',
         status: grounding?.status === 'verified' && grounding?.basis === 'user_input' ? '已核对原文' : groundingStatuses[grounding?.status] || '',
         tone: grounding?.status === 'verified' ? 'accent' : 'warning',
-        citations: Array.isArray(grounding?.citations) ? grounding.citations.filter(item => item && typeof item === 'object') : [] };
+        citations: Array.isArray(grounding?.citations) ? grounding.citations.filter((item,index) => item && typeof item === 'object' && (!changed || referenced.has(citationNumber(item,index)))) : [] };
 }
 
 export function sourceIdentity(source) {

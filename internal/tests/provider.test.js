@@ -224,6 +224,7 @@ test('grounded drafts and verification use strict structured responses without s
         assert.deepEqual(body.response_format, {type:'json_object'});
         assert.deepEqual(JSON.parse(body.messages[1].content), input);
         assert.match(body.messages[0].content, /数据/);
+        assert.match(body.messages[0].content, /includeSourceComparison/);
     }
 });
 

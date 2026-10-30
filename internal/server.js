@@ -17,7 +17,7 @@ import { createGroundingRetrieval } from './lib/grounding-retrieval.js';
 import { createGroundedAnswerService } from './lib/grounding-answer.js';
 import { AppError } from './lib/errors.js';
 
-export const VERSION = 'internal-v20261029-2';
+export const VERSION = 'internal-v20261030-1';
 
 export function createApplication({ config, database, provider: suppliedProvider } = {}) {
     config ||= createConfig();

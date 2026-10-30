@@ -78,11 +78,15 @@ test('multi-field answers retain every matched field and explicitly mark missing
     assert.equal(result.grounding.status, 'partial'); assert.match(result.text, /规格/); assert.match(result.text, /暂时无法确认/);
 });
 
-test('different confirmed values return both sourced records as a conflict instead of choosing a winner', async () => {
+test('different confirmed values retain conflict gating without displaying internal conflict details', async () => {
     const page = setup({ data: { facts: [price, { ...price, id: 'price2', value: '198.00', evidence: '青禾精华售价198.00元/瓶。' }] } });
     const result = await page.answer('青禾精华售价多少？');
-    assert.equal(result.grounding.status, 'conflict'); assert.match(result.text, /168\.00/); assert.match(result.text, /198\.00/);
-    assert.deepEqual(result.grounding.citations.map(item => item.number), [1, 2]); assert.equal(page.calls.draft, 0);
+    assert.equal(result.grounding.status, 'conflict'); assert.equal(result.text, '这部分暂时无法确认。');
+    assert.equal(result.grounding.computations.length, 0); assert.equal(page.calls.draft, 0);
+    assert.doesNotMatch(result.text, /168|198|冲突|不同值/);
+    const comparison = await page.answer('比较资料中青禾精华售价的冲突记录');
+    assert.match(comparison.text, /168\.00/); assert.match(comparison.text, /198\.00/);
+    assert.deepEqual(comparison.grounding.citations.map(item => item.number), [1, 2]);
 });
 
 test('ambiguous objects ask for clarification without outputting a candidate value', async () => {
@@ -139,6 +143,29 @@ test('semantic review can retain supported claims while marking the answer parti
     ] }), verify: () => ({ verdicts: [{ claimId: 'a', supported: true, relevant: true }, { claimId: 'b', supported: false, relevant: true }] }) });
     const result = await page.answer(); assert.equal(result.grounding.status, 'partial'); assert.match(result.text, /先检查资料/);
     assert.doesNotMatch(result.text, /保证/); assert.equal(result.grounding.claims.length, 1);
+    assert.doesNotMatch(result.text, /部分内容缺少充分依据|已省略/);
+});
+
+test('internal source-conflict narration is omitted while useful verified claims keep valid citations', async () => {
+    const internal = '库内存在配送方式的口径冲突：一说只支持自提，一说可以配送。';
+    const page = setup({data:{evidence:[{...source,content:source.content+'\n\n'+internal}]}, draft:()=>({claims:[
+        {id:'a',kind:'quote',text:source.content,evidenceIds:[source.id],quote:source.content},
+        {id:'b',kind:'summary',text:internal,evidenceIds:[source.id],quote:internal}
+    ]})});
+    const result = await page.answer();
+    assert.equal(result.grounding.status,'partial'); assert.match(result.text,/门店先检查资料/);
+    assert.doesNotMatch(result.text,/库内存在|口径冲突|已省略/);
+    assert.equal(result.grounding.claims.length,1); assert.equal(result.grounding.citations.length,1);
+    assert.equal(result.grounding.citations[0].number,1);
+    const onlyNotice = await setup({data:{evidence:[{...source,content:internal}]},draft:()=>({claims:[{id:'n',kind:'quote',text:internal,quote:internal,evidenceIds:[source.id]}]})}).answer();
+    assert.equal(onlyNotice.text,'这部分暂时无法确认。');
+    assert.notEqual(onlyNotice.grounding.status,'verified');
+});
+
+test('ordinary business conflict handling remains a supported answer', async () => {
+    const content='成员意见冲突时，由项目管理员协调。';
+    const result=await setup({data:{evidence:[{...source,content}]},draft:()=>({claims:[{id:'business',kind:'quote',text:content,quote:content,evidenceIds:[source.id]}]})}).answer('成员意见不一致怎么办？');
+    assert.equal(result.grounding.status,'verified'); assert.match(result.text,/项目管理员协调/);
 });
 
 test('verification rejects unknown, duplicate, missing and coerced verdicts', async () => {
