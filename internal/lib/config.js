@@ -41,6 +41,15 @@ function optionalHttpsUrl(value) {
     return normalized.replace(/\/+$/, '');
 }
 
+// Model names are restricted to a conservative slug so a typo cannot inject anything into
+// the upstream request body.
+function boundedModel(value, fallback) {
+    if (value === undefined || value === '') return fallback;
+    const model = String(value).trim();
+    if (!/^[a-z0-9][a-z0-9.\-]{2,63}$/i.test(model)) throw new Error('INTERNAL_IMAGE_MODEL must be a model slug');
+    return model;
+}
+
 export function createConfig(env = process.env) {
     const origin = new URL(env.INTERNAL_ORIGIN || 'http://127.0.0.1:3001');
     if (origin.pathname !== '/' || origin.search || origin.hash || origin.username || origin.password) throw new Error('INTERNAL_ORIGIN must contain only an origin');
@@ -55,6 +64,11 @@ export function createConfig(env = process.env) {
     const chatModel = env.INTERNAL_CHAT_MODEL || 'zai-org/GLM-5.3-Flash';
     const searchProvider = optionalProvider(env.INTERNAL_SEARCH_PROVIDER);
     const searchApiKey = env.INTERNAL_SEARCH_API_KEY || '';
+    const dataDirectory = path.resolve(APP_DIRECTORY, env.INTERNAL_DATA_DIRECTORY || 'var');
+    // Generated images live under the data directory and never inside dist/: they must
+    // survive a rebuild and stay outside anything the static handler serves.
+    const imageDirectory = path.resolve(dataDirectory, env.INTERNAL_IMAGE_DIRECTORY || 'images');
+    if (!imageDirectory.startsWith(dataDirectory + path.sep)) throw new Error('INTERNAL_IMAGE_DIRECTORY must stay inside the data directory');
     return {
         origin: origin.origin,
         host: env.INTERNAL_HOST || '127.0.0.1',
@@ -87,7 +101,21 @@ export function createConfig(env = process.env) {
         searchMaxResults: boundedNumber(env.INTERNAL_SEARCH_MAX_RESULTS, 5, 1, 10),
         // Read-only derivation: never a second environment override.
         searchEnabled: Boolean(searchProvider && searchApiKey),
-        dataDirectory: path.resolve(APP_DIRECTORY, env.INTERNAL_DATA_DIRECTORY || 'var'),
+        dataDirectory,
+        // ---- R2 image generation -------------------------------------------------
+        imageApiBase: optionalHttpsUrl(env.INTERNAL_IMAGE_API_BASE)
+            || 'https://tokenhub.tencentmaas.com/v1/wand/hunyuan-image/v35-generation',
+        imageApiKey: env.INTERNAL_IMAGE_API_KEY || '',
+        imageModel: boundedModel(env.INTERNAL_IMAGE_MODEL, 'hy-image-v3.5-preview'),
+        imageTimeoutMs: boundedNumber(env.INTERNAL_IMAGE_TIMEOUT_MS, 150000, 5000, 180000),
+        imageConcurrency: boundedNumber(env.INTERNAL_IMAGE_CONCURRENCY, 2, 1, 4),
+        imageQueueCapacity: boundedNumber(env.INTERNAL_IMAGE_QUEUE_CAPACITY, 8, 0, 64),
+        imageMinuteLimit: boundedNumber(env.INTERNAL_IMAGE_MINUTE_LIMIT, 5, 1, 60),
+        imageHourLimit: boundedNumber(env.INTERNAL_IMAGE_HOUR_LIMIT, 30, 1, 500),
+        // Fixed product limits (PRD hard requirements, not tunable at runtime).
+        imagePromptCharacters: 4000,
+        imageMaxBytes: 20971520,
+        imageDirectory,
         chatConcurrency: boundedNumber(env.INTERNAL_CHAT_CONCURRENCY, 4, 1, 8),
         chatQueueCapacity: 32,
         contextCharacters: 48000,

@@ -12,6 +12,7 @@ import { createMemoryService } from './lib/memory.js';
 import { createKnowledgeService } from './lib/knowledge.js';
 import { createChatService } from './lib/chat.js';
 import { createSearch } from './lib/search.js';
+import { createImageService } from './lib/images.js';
 import { createProvider } from './lib/provider.js';
 import { createGroundingLibrary } from './lib/grounding-library.js';
 import { createGroundingRetrieval } from './lib/grounding-retrieval.js';
@@ -26,6 +27,9 @@ export function createApplication({ config, database, provider: suppliedProvider
     const provider = suppliedProvider || createProvider({ config });
     // R1-05: the search adapter is assembled here so its transport can be injected in tests.
     const search = createSearch({ config, fetchImpl });
+    // R2: image generation (store + policy + upstream + worker pool). Mounted below, after
+    // the authentication middleware, so every route is member scoped.
+    const images = createImageService({ db, config, fetchImpl });
     const auth = createAuth({ db, config });
     const memory = createMemoryService({ db, config, provider });
     const knowledge = createKnowledgeService({ db, config, provider });
@@ -64,7 +68,7 @@ export function createApplication({ config, database, provider: suppliedProvider
             chat: { ready: state.ready, active: state.active,
                 breaker: state.breaker || { state: 'closed', failures: 0, openUntil: null, lastError: null } },
             memory: memory.health(), knowledge: knowledge.health(),
-            search: search.health(),
+            search: search.health(), images: images.health(),
             grounding: { mode: groundingMode, ready }, modelConfigured: Boolean(config.apiKey) });
     });
     app.use('/api', auth.guardOrigin);
@@ -81,6 +85,9 @@ export function createApplication({ config, database, provider: suppliedProvider
     app.use('/api', memory.router);
     app.use('/api', knowledge.router);
     app.use('/api', groundingLibrary.router);
+    // R2 routes must be registered after the ready gate and before the chat router so the
+    // `/api` 404 handler below never shadows them.
+    app.use('/api', images.router);
     app.use('/api', chat.router);
     app.use('/api', (request, response) => response.status(404).json({ error: { code: 'NOT_FOUND', message: '接口不存在。' } }));
     const publicDirectory = path.join(APP_DIRECTORY, 'dist');
@@ -110,6 +117,8 @@ export function createApplication({ config, database, provider: suppliedProvider
         await auth.bootstrap();
         await memory.start();
         await knowledge.start();
+        // Repairs half finished jobs from a previous process before accepting new work.
+        images.start();
         chat.start();
         started = true;
         ready = true;
@@ -119,13 +128,15 @@ export function createApplication({ config, database, provider: suppliedProvider
         if (closed) return;
         closed = true;
         ready = false;
+        // Stop image workers first: their terminal DB write has to land before db.close().
+        await images.stop();
         await chat.stop();
         await knowledge.stop();
         await memory.stop();
         if (!database) db.close();
     }
 
-    return { app, db, auth, memory, knowledge, chat, search, grounding, groundingLibrary, groundingRetrieval, config, startServices, close };
+    return { app, db, auth, memory, knowledge, chat, search, images, grounding, groundingLibrary, groundingRetrieval, config, startServices, close };
 }
 
 export async function startServer(options = {}) {

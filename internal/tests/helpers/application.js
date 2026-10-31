@@ -1,5 +1,8 @@
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
 import http from 'node:http';
+import os from 'node:os';
+import path from 'node:path';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { openDatabase } from '../../lib/database.js';
 import { createApplication } from '../../server.js';
@@ -8,6 +11,9 @@ export const origin = 'https://internal.test';
 
 export async function fixture(context, options = {}) {
     const db = openDatabase(':memory:');
+    // A real temporary directory keeps generated images (and their cleanup) outside the repo,
+    // so no test can ever write into the working tree.
+    const dataDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'wzy-internal-'));
     const config = { origin, host: '127.0.0.1', port: 0, cookieName: 'test_internal', secureCookies: false,
         sessionTtlMs: 3600000, encryptionKey: Buffer.alloc(32, 7), bootstrapUsername: 'admin',
         bootstrapPassword: 'InitialPassword2026!', chatModel: 'mock-chat', memoryModel: 'mock-memory',
@@ -18,7 +24,14 @@ export async function fixture(context, options = {}) {
         // confirmed-source fixtures.
         groundingMode: 'free',
         // Keep the storage breaker cooldown tiny so recovery tests finish in milliseconds.
-        chatBreakerCooldownMs: 80, ...options.config };
+        chatBreakerCooldownMs: 80,
+        // Image generation is off by default (no key) and always points at a stub host, so a
+        // test can never reach the real upstream by accident.
+        imageApiBase: 'https://image.test/v1/wand/hunyuan-image/v35-generation',
+        imageApiKey: '', imageModel: 'hy-image-v3.5-preview', imageTimeoutMs: 5000,
+        imageConcurrency: 2, imageQueueCapacity: 8, imageMinuteLimit: 5, imageHourLimit: 30,
+        imagePromptCharacters: 4000, imageMaxBytes: 20971520,
+        dataDirectory, imageDirectory: path.join(dataDirectory, 'images'), ...options.config };
     const calls = [];
     const extraction = [];
     const provider = { async *chat(messages, args) { calls.push(messages); yield '**测试**\n\n正常回答。'; },
@@ -32,6 +45,7 @@ export async function fixture(context, options = {}) {
         server.closeAllConnections();
         await new Promise(resolve => server.close(resolve));
         db.close();
+        fs.rmSync(dataDirectory, { recursive: true, force: true });
     });
     if (options.start !== false) await application.startServices();
     const port = server.address().port;
