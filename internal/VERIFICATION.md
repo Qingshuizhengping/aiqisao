@@ -1,5 +1,138 @@
 # 内部验收记录
 
+## 2026-10-31 · v2（R1 开放回答 / R2 素材生成 / R3 三条高危修复 / R4 共享项目）
+
+服务版本 `internal-v20261031-1`。本轮为开发自测记录，**未发布**：以下数字全部来自本机 Windows 工作区，部署目标 Linux 需按 [DEPLOYMENT.md](DEPLOYMENT.md) 重新 `npm ci && npm test && npm run build` 后再复签。
+
+### 一、测试基线与增量
+
+| 项目 | 数值 |
+| --- | --- |
+| 动手前基线 | **223 pass / 0 fail**（约 14s） |
+| 收口时全量 | **290 pass / 0 fail**（约 19s） |
+| 增量 | **+67**，无删除、无跳过、无 todo |
+
+新增/扩充用例分布：
+
+| 文件 | 条数 | 覆盖 |
+| --- | --- | --- |
+| `tests/build.test.js` | 4 | 无兄弟目录引用（源码目录 + 全仓文档/脚本）、vendored 三件套与版本一致、lock 与 package.json 一致、真实构建产物与 NOTICES |
+| `tests/grounding-mode.test.js` | 5 | 默认 free、显式 strict、注入 provider 不改模式、health 与实际一致、非法值抛错 + 冷却参数边界 |
+| `tests/storage-breaker.test.js` | 6 | 5 次失败开熔断、指数退避上限、半开成功复位、半开失败重开、snapshot 形状、持续成功不堆积 |
+| `tests/chat-recovery.test.js` | 3 | 5 次 SQLITE_BUSY → 503+Retry-After → 冷却后 202（不重启）、单次失败即恢复、lastError 保留 |
+| `tests/evidence-summary.test.js` | 5 | 文件+记忆合并计数、纯模型知识无角标、网络与本地来源区分、degraded、空/畸形输入安全 |
+| `tests/open-answer.test.js` | 11 | 空库也回答、角标数量一致、零 fetch 两例、stub ok、stub 超时降级、偏好持久化、两条提示词断言、偏好校验、旧库迁移、网络来源不跨账号 |
+| `tests/images.test.js` | 18 | 6 尺寸 + auto、非法输入、幂等/冲突、限流、并发与队列、五类失败文案互异、结果未知不重试、账号隔离、重启保留、重启修复、下载头、build 安全、未就绪/文件缺失、未配 key、401 不登出、分页、job 视图、前端契约 |
+| `tests/shared-projects.test.js` | 15 | 默认非共享、标记权限与可见性、归档拒绝、批量授权、幂等、不改原 admin、撤销审计、未共享拒绝、载荷校验、撤销即时、生成中撤销、停用可见性、成员只读、审计不含正文、前端契约 |
+
+### 二、三次连续全量运行（无 flaky）
+
+| 轮次 | 结果 | 耗时 |
+| --- | --- | --- |
+| 第 1 次 | 290 pass / 0 fail | 18.8s |
+| 第 2 次 | 290 pass / 0 fail | 18.8s |
+| 第 3 次 | 290 pass / 0 fail | 18.9s |
+| 文档定稿后复查（连续 2 次） | 290 pass / 0 fail | 20.3s / 19.4s |
+
+### 三、静态一致性检查
+
+| 检查 | 结果 |
+| --- | --- |
+| 旧严格模式布尔开关的字段名（v1 遗留） | **0 命中**（代码、测试与文档都不再出现；`grep` 一下应无输出） |
+| 兄弟参考目录的相对路径（`..` + 参考实现目录名 + `/`） | **0 命中** |
+| `npm run build` | 成功，构建版本 `03d70ec68f9c` |
+
+兄弟参考目录清零过程中修掉的三处（都不是代码依赖，但会让检索不干净）：
+
+1. `scripts/publish-server.sh` 的归档白名单原本还允许兄弟参考目录的 `src/` 子树；v2 已把渲染器与样式内置，白名单收紧为只允许 `internal/`。**发布归档命令随之变化**：`git archive … internal`（不再带兄弟参考项目）。若沿用旧命令，脚本会以 `Unexpected archive path` 退出，不会产出一个半成品版本。
+2. `DEPLOYMENT.md` 的发布命令说明同步改写。
+3. `VERIFICATION.md` 的历史条目把头像来源写成“原项目 `public/static/img/…`”，不再带兄弟目录前缀（事实未变，仅去掉路径前缀）。
+
+`tests/build.test.js` 已把这两个检查固化为断言：源码目录零命中 + **全仓**（文档、部署脚本、测试）零命中，后续有人写回旧路径会直接失败。
+
+构建产物：
+
+| 文件 | 大小 |
+| --- | --- |
+| `dist/index.html` | 1149 B |
+| `dist/assets/app.js` | 187742 B |
+| `dist/assets/style.css` | 94700 B |
+| `dist/THIRD_PARTY_NOTICES.txt` | 2942 B（marked 18.0.9 MIT 原文） |
+| `dist/` 合计 | 449 KB |
+
+### 四、单目录构建实测（H2 的硬证据）
+
+复制方式：`git ls-files internal | tar` → 只含被 Git 跟踪的文件（天然排除 `node_modules` / `var` / `dist` / `.graphify`），复制后 1.8 MB、22 个顶层条目。
+
+| 尝试 | 命令 | 结果 |
+| --- | --- | --- |
+| 1 | Node 22.22.2：`npm ci` | **失败**（37.5s）。`better-sqlite3@13.0.3` 走 `node-gyp rebuild`，报 `gyp ERR! stack Error: Could not find any Visual Studio installation to use` |
+| 2 | Node 24.15.0：`npm ci` | **失败**（6.8s），同一原因（`gyp ERR! find VS You need to install the latest version of Visual Studio`） |
+| 3 | Node 22.22.2：`npm ci --ignore-scripts` + `npm run build` | **成功**：安装 76 个包 4.2s、构建 2.3s，产物与仓库内构建同版本号 `03d70ec68f9c`（css/js/id 一致），`dist/` 449 KB |
+
+**结论与归因**：`npm run build` 这条链路（esbuild + 内置 vendor + `public/` 静态资源）**确实单目录自足**，不依赖任何兄弟目录，两次独立构建的产物哈希一致。`npm ci` 的失败是**本机环境**问题而非仓库缺陷：这台 Windows 机器没有 MSVC 构建工具链，`better-sqlite3` 也没有取到预编译二进制（两个 Node 版本都回退到源码编译）。目标 Linux + Node 24 的预编译覆盖需要在部署机上复验；`DEPLOYMENT.md` 已写明「在实际目标 Linux 上重新 `npm ci`，`better-sqlite3` 为本机原生依赖」。
+
+**本轮同时修掉一个真实的部署级缺陷**：`package-lock.json` 里缺少 `marked@18.0.9` 条目（T01 只改了 `package.json`），导致任何干净目录执行 `npm ci` 直接 `EUSAGE: Missing: marked@18.0.9 from lock file`。已补齐锁条目（integrity 与 `third_party/README.md` 记录的上游哈希一致），并在 `tests/build.test.js` 增加「锁文件与 manifest 的直接依赖完全一致」的断言防止复发。若没做这次隔离实测，这个问题只会在真正发布时炸。
+
+### 五、设计文档 §10.3 手工验收执行记录
+
+| # | 项目 | 状态 | 说明 |
+| --- | --- | --- | --- |
+| 1 | 单目录构建（复制到空目录 → `npm ci && npm run build`） | **部分完成** | 复制与 `npm run build` 已实测通过；`npm ci` 因本机缺 MSVC 失败（见上表），未绕过、未用 `--force` 伪装成功 |
+| 2 | 真机生图（六档各出一张、关面板重开仍在、断网 10s 提示） | **未执行** | 本机没有 `INTERNAL_IMAGE_API_KEY`。能力由 18 条桩测覆盖（含六档请求体、两条取图路径、五类失败、重启恢复、下载头）；真实上游契约仍需一次真机联调 |
+| 3 | 严格模式回滚（置 strict → 无依据提问返回不可核实；置回 free → 恢复） | **自动化覆盖，未真机** | `grounding-mode.test.js` 用真实 HTTP 请求断言两种模式的分支与 `/api/health` 一致；未在真机改 `.env` 重启验证 |
+| 4 | 共享项目闭环（建项目→共享→授权→成员可见→成员 403→撤销消失） | **自动化覆盖，未浏览器手工** | `shared-projects.test.js` 15 条覆盖全部环节（含生成中撤销 1 秒内停止、已产出内容保留）；未做浏览器点击验证 |
+| 5 | 熔断自愈（chmod 400 数据库 → 观察 open → 恢复权限 → 自动 200） | **自动化覆盖，未做 chmod 演练** | `chat-recovery.test.js` 用 `db.prepare` 注入 5 次 `SQLITE_BUSY` 走完整 503 → 冷却 → 202 流程；真实文件权限场景未演练 |
+
+### 六、PRD 32 条逐条对账
+
+统计：**已实现 28 条 / 降级实现 2 条 / 未实现 2 条**。
+
+| ID | 优先级 | 状态 | 证据 / 说明 |
+| --- | --- | --- | --- |
+| R1-01 | P0 | 已实现 | `open-answer.test.js`「an empty library still produces a real answer with no fallback wording」 |
+| R1-02 | P0 | 已实现 | `grounding-mode.test.js` 全 5 条；四阶段代码 `lib/grounding-*.js` 完整保留，只由 `groundingMode` 决定 |
+| R1-03 | P0 | 已实现 | `evidence-summary.test.js` 5 条 + `open-answer`「a library-backed answer reports the same source count as its badge」+ `src/chat.js` 的 `evidenceRow()`（仅非审计视图） |
+| R1-04 | P0 | **降级实现** | 规则已写进提示词并用断言固定（`open-answer`「the system prompt tells the model to flag volatile facts…」），但**没有真实模型 E2E**证明输出一定遵守；本机无模型密钥，自动化只能用模拟 provider。风险：提示词级保证 ≠ 行为保证 |
+| R1-05 | P1 | **降级实现** | 适配层、零外发、清洗、超时降级、`/api/health` 标注全部实现并有 3 条用例；但**没有真实 provider**，只实现了测试用 `stub` 与 `tavily` 骨架（配置 `tavily` 只会降级）。设计 §U7 明确本轮只留骨架 |
+| R1-06 | P1 | 已实现 | `open-answer`「turning search off in preferences persists, is echoed by /me and stops all fetching」+ `src/account.js` 仅在 `search.enabled` 时渲染开关 |
+| R1-07 | P1 | 已实现（依赖 R1-05 降级） | `open-answer` stub 两条来源 + 超时降级；`evidenceSummary().network` 与「来自网络 N 条」角标区分资料来源；超时不留空引用块 |
+| R1-08 | P2 | 已实现 | `evidence-summary.test.js`「network sources stay distinguishable from local sources」的 `items[].kind`（file/memory/network） |
+| R2-01 | P0 | 已实现 | `images.test.js`「the panel wiring matches the agreed constants and the sidebar entry exists」+ `src/images.js`、`src/app.js` 侧栏入口；Esc/遮罩/焦点回归由既有 `ui.js:76-91` 提供 |
+| R2-02 | P0 | 已实现 | `images.test.js`「all six size presets resolve and only auto omits the upstream size field」+「invalid sizes, blank prompts… are rejected」 |
+| R2-03 | P0 | 已实现 | 状态存 SQLite；`images.test.js`「history and files survive a full service restart…」+ 前端 `loadHistory()` 重开恢复「生成中」 |
+| R2-04 | P0 | 已实现 | `src/images.js` 结果区大图 + 下载（`downloadFile`）+ 再生成（新 `requestId`）；用例覆盖下载头与 job 视图 |
+| R2-05 | P0 | 已实现 | `images.test.js`「a member only ever sees their own images」+「history and files survive a full service restart…」 |
+| R2-06 | P0 | 已实现 | 「five upstream failure classes produce five distinct codes and user texts」+「a dropped connection marks the result unknown and is never retried automatically」 |
+| R2-07 | P1 | 已实现 | `TEMPLATES` 5 条文案断言（产品平铺/海报竖版/贴片背景/门店场景/人物氛围）+ `.chip.active` 选中态 |
+| R2-08 | P1 | 已实现 | 「a member may generate five images a minute and the sixth is rate limited」（含 `Retry-After`）；小时级计数同源实现，未单独用例 |
+| R2-09 | P0 | 已实现 | 「downloads carry an inline-safe cache policy and a readable file name without the prompt」+「images live outside dist so a rebuild cannot delete them」 |
+| R2-10 | P2 | **未实现** | 参考图（图生图）本轮不做；`image_jobs.reference_name` 字段已预留恒为 `NULL`，上游请求体不带 image part。原因：PRD 标 P2，设计 §1.3 明确排除 |
+| R2-11 | P2 | **未实现** | 「插入对话」本轮不做。原因同上；面板只提供下载与再生成 |
+| R3-01 | P0 | 已实现 | `storage-breaker.test.js` 6 条 + `chat-recovery.test.js`「five storage failures answer 503 with Retry-After, then the same request succeeds without a restart」；`/api/health` 的 `chat.breaker.lastError` 即 `lastStorageError` 等价字段 |
+| R3-02 | P0 | 已实现 | `build.test.js` 4 条（含全仓零命中）+ 隔离目录构建实测（见第四节）；`npm ci` 部分受本机工具链限制，已如实记录 |
+| R3-03 | P0 | 已实现 | `grounding-mode.test.js` 判定表 4 条 + 非法值抛错；`health.grounding.mode` 输出真实值，`transport-fixture` 措辞已删 |
+| R3-04 | P1 | 已实现 | 223 → 290，全绿；三条修复各有专属文件，见第一节 |
+| R4-01 | P0 | 已实现 | 项目信息里的「共享给团队」开关（仅 `writable` 时可改）+ `shared-projects.test.js`「only a project administrator can publish a project…」+「an archived project cannot change its shared flag…」 |
+| R4-02 | P0 | 已实现 | 「creating an account can grant several shared projects at once」「re-submitting the same grants is idempotent…」「a project administrator is never downgraded…」 |
+| R4-03 | P0 | 已实现 | `shared-projects.test.js` 第 15 条前端契约 + `src/shared-projects.js`（名称/成员数/角色/归档徽标/空态/点击进入） |
+| R4-04 | P0 | 已实现 | 「inside a shared project a member has full chat access but no project administration」+ `src/projects.js` 成员视角不渲染设置/成员/归档 |
+| R4-05 | P0 | 已实现 | 「revoking access takes effect immediately on every read path」+「revoking during a running answer stops it within a second…」 |
+| R4-06 | P1 | 已实现 | 「an archived project cannot change its shared flag…」+ 归档共享项目聊天返回 409 `PROJECT_ARCHIVED`；面板显示「只读」徽标 |
+| R4-07 | P1 | 已实现 | 复用 `assertProjectAdminRemovable`（`lib/access.js`）；「a project administrator is never downgraded…」证明控制面板不会删掉管理员关系 |
+| R4-08 | P2 | 已实现 | 成员 `GET /members` 200、`PUT`/`DELETE` 403（R4-04 用例内四条 403 断言） |
+| R4-09 | P2 | 已实现 | `project.share_update` + `admin.shared_project_sync`；「the audit trail records share changes and grants without any conversation content」dump 全表断言不含正文 |
+
+### 七、仍存在的风险（如实列出）
+
+1. **生图上游契约未真机验证**（R2 全部）。请求/响应形状照参考实现与设计文档写，两条取图路径都支持，但真实上游的字段漂移（`choices[0].delta.image` 是否稳定、402/401/422 的真实 status+code 组合）只能用桩测逼近。建议发布前做一次真机联调并把真实响应体固化为 fixture。
+2. **`npm ci` 在本机无法完成**（缺 MSVC / 无预编译二进制）。构建链路已验证自足，但「干净机器一条命令装好」这件事尚未在 Linux + Node 24 上复签。
+3. **R1-04/R1-05 的保证层级较低**：前者是提示词约束、后者是适配层骨架 + stub。真实回答风格与真实搜索结果质量都没有验证手段。
+4. **图片不进备份**：`var/images/` 目前在备份与加密导出范围之外，`image_jobs` 记录会留下但文件缺失时下载返回 410。已在 DEPLOYMENT 明确写出，运维需要单独规划该目录的备份策略。
+5. **熔断的半开探测复用调度读**：实现上简单可靠，但如果在「冷却刚好到期且队列为空」的时刻没有任何请求或定时器唤醒，`/api/health` 仍可能短暂报 not-ready 直到下一次调度（定时器会在冷却到期时主动唤醒一次，因此实际窗口极小）。
+6. **搜索元数据在跨账号读取时被整体清空**（`status:'filtered'`），本项目管理员看不到成员回答引用了哪些网页。这是有意的隐私取舍，但如果产品后续要求「管理员可核查联网来源」，需要新的共享来源规则。
+
+
 ## 2026-10-30 · 自然聊天修正版上线与真实成文验证
 
 通过阿里云命令助手 `t-gz071llnvcbjdvk` 发布 `8ff03de8eb2354820082834fba4c5c389a08cd34`，服务版本 `internal-v20261030-3`，前端 `5a770ed0f47f`。GitHub Linux 检查 `41052847103` 成功，服务器 223/223 测试与构建通过；一致性备份、版本切换及重启成功。上线后 22 项针对性回归、严格模式、TLS、匿名接口 401、人格私有路径 404、来源版本、数据库完整性和备份检查全部通过，原公网服务健康。
@@ -78,7 +211,7 @@ Windows Node 24.15.0 的 199 项合成测试通过，包含原 135 项回归和 
 
 ## 2026-10-28 · 原 AI 七嫂头像与 6069 发布
 
-按用户最新要求恢复原 AI 七嫂头像，登录页、侧栏、欢迎区、聊天头像、favicon 和 PWA 图标均复用原项目已有图片。头像与原 `optimized/public/static/img/avatar-192.png` 的 SHA-256 一致：`494d852a37cff20a4b992f26d49d0b9a6f67ac2f366e6d89731376f29cf016b7`；名称继续为“AI七嫂·员工专属版”。当前前端构建版本 `cb302df09fdd`，服务版本 `internal-v20261028-5`。
+按用户最新要求恢复原 AI 七嫂头像，登录页、侧栏、欢迎区、聊天头像、favicon 和 PWA 图标均复用原项目已有图片。头像与原公网应用的 `public/static/img/avatar-192.png` 的 SHA-256 一致：`494d852a37cff20a4b992f26d49d0b9a6f67ac2f366e6d89731376f29cf016b7`；名称继续为“AI七嫂·员工专属版”。当前前端构建版本 `cb302df09fdd`，服务版本 `internal-v20261028-5`。
 
 发布前本机 92/92 项测试通过，增加 HTTPS IP 端口 Origin、production 拒绝 HTTP 与 Secure/HttpOnly/host-only Cookie 验证。部署目标为 `https://8.134.141.217:6069`，后端继续监听 `127.0.0.1:3001`；保留现有账号、数据库与备份。使用服务器已配置的可信 IP 证书和续期重载钩子，开启 production，不关闭 Origin/CSRF 或管理员二次验证。发布脚本见 `scripts/publish-server.sh`，正式发布后另行记录 GitHub 提交与外部连通性回执。
 

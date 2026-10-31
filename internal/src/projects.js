@@ -13,7 +13,8 @@ export function createProjectPanel(onCreated) {
     form.addEventListener('submit', event => {
         event.preventDefault();
         submitting(form, async () => {
-            const data = await api('/api/projects', { method: 'POST', body: { name: name.control.value.trim(), description: description.control.value.trim(), instructions: instructions.control.value.trim() } });
+            const data = await api('/api/projects', { method: 'POST', body: { name: name.control.value.trim(), description: description.control.value.trim(),
+                instructions: instructions.control.value.trim() } });
             view.close();
             await onCreated(data.project);
             toast('项目空间已创建。');
@@ -32,7 +33,12 @@ export function openProjectPanel({ user, project, onChanged }) {
     const members = el('div', { className: 'stack-tight' }, empty('正在读取项目成员…'));
     const memberErrors = el('div');
     const memberFormHost = el('div');
+    // R4-01: the shared flag lives in the project settings, so only the project administrator
+    // can publish the project for cross-account grants.
+    const sharedToggle = el('input', { type: 'checkbox', checked: Boolean(project.shared), disabled: !writable });
     const form = el('form', { className: 'stack' }, name.wrapper, description.wrapper, instructions.wrapper,
+        el('label', { className: 'check-field' }, sharedToggle, el('span', { text: '共享给团队' })),
+        el('small', { className: 'muted', text: '开启后，系统管理员可以在账号设置里把这个项目授权给其他成员；被授权的成员角色固定为项目成员，本页的设置仍只由项目管理员维护。' }),
         writable && button('保存项目信息', null, { type: 'submit', className: 'button primary' }), errors);
     // R4-04: a member (or an administrator reading a shared project they do not administer)
     // never gets the settings form, the member manager or the archive entry — those stay with
@@ -59,7 +65,8 @@ export function openProjectPanel({ user, project, onChanged }) {
     form.addEventListener('submit', event => {
         event.preventDefault();
         submitting(form, async () => {
-            const data = await api('/api/projects/' + encodeURIComponent(project.id), { method: 'PATCH', body: { name: name.control.value.trim(), description: description.control.value.trim(), instructions: instructions.control.value.trim() } });
+            const data = await api('/api/projects/' + encodeURIComponent(project.id), { method: 'PATCH', body: { name: name.control.value.trim(), description: description.control.value.trim(),
+                instructions: instructions.control.value.trim(), shared: sharedToggle.checked } });
             view.close();
             await onChanged(data.project);
             toast('项目信息已保存。');

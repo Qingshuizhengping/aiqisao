@@ -437,6 +437,10 @@ test('the shared-project panel, sidebar entry, account form and settings rows ar
     assert.match(projects, /if \(canManage\) loadMembers\(\)/);
     assert.match(projects, /项目设置、成员与归档由项目管理员管理/);
     assert.match(projects, /badge\('共享', 'shared-badge'\)/);
+    // R4-01: the shared flag is editable from the project settings by the administrator only.
+    assert.match(projects, /共享给团队/);
+    assert.match(projects, /const sharedToggle = el\('input', \{ type: 'checkbox', checked: Boolean\(project\.shared\), disabled: !writable \}\)/);
+    assert.match(projects, /shared: sharedToggle\.checked/);
 
     // 5) Styles: every new class exists, colours come from variables, touch targets and
     //    reduced-motion rules are present.

@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # Run over the existing authenticated SSH connection on the configured Alibaba host.
-# Input: git archive containing internal/ and optimized/src/, named with its commit.
+# Input: git archive containing internal/ only (v2 vendors its markdown renderer and styles
+# inside internal/, so a sibling reference project is no longer part of a release), named with
+# its commit.
 set -euo pipefail
 umask 077
 export PATH=/opt/node-v24.22.1-linux-x64/bin:$PATH
@@ -30,7 +32,7 @@ with tarfile.open(sys.argv[1]) as bundle:
         p=PurePosixPath(name)
         if p.is_absolute() or '..' in p.parts or p.as_posix()!=name or not (member.isfile() or member.isdir()):
             raise SystemExit('Unsafe archive member')
-        if not (name=='internal' or name.startswith('internal/') or name=='optimized' or name=='optimized/src' or name.startswith('optimized/src/')):
+        if not (name=='internal' or name.startswith('internal/')):
             raise SystemExit('Unexpected archive path')
         if any(part in ('node_modules','var','dist') for part in p.parts) or p.name=='.env' or p.suffix in ('.key','.pem','.sqlite','.enc'):
             raise SystemExit('Private or generated files cannot be published')

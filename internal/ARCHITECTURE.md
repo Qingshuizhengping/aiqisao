@@ -16,9 +16,42 @@
 - `chat-service.js`：会话读写、访问边界、上下文组装、幂等提交和限流。
 - `chat-runner.js`：持久队列、生成执行、增量保存、停止、启动恢复和订阅生命周期。
 
-生产执行器改为检索、草稿、核验、发布四阶段，核验前仅保存进度。严格依据服务和新增来源确认、标准事实规则见 [GROUNDING.md](GROUNDING.md)。旧流式传输分支仅供依赖注入的模拟测试保留；生产配置固定严格模式。
+回答分两条互斥的路径，由**唯一**配置 `config.groundingMode` 决定（`INTERNAL_GROUNDING_MODE`，默认 `free`）：
+
+- `free`（默认）：`buildContext()` 组装上下文后走 `provider.chat()` 流式回答。检索为空不阻断回答。
+- `strict`：检索、草稿、核验、发布四阶段，核验前只保存进度。严格依据服务、来源确认与标准事实规则见 [GROUNDING.md](GROUNDING.md)。
+
+判定只看这一个字段，**不看是否注入了 provider**——早期版本用「调用方注入了模拟 provider 就自动降级」的隐式规则，导致测试可能静默走错分支，该规则已删除。`/api/health` 的 `grounding.mode` 输出真实值。
 
 关闭 SSE 或离开页面只结束观察；服务端生成继续运行。明确停止通过现有停止 API 执行。重启恢复保留排队任务，将已开始但未结束的任务标为中断，避免重复请求模型。
+
+## 存储失败熔断
+
+`lib/storage-breaker.js` 是无数据库依赖的纯状态机（`closed` / `open` / `half-open`）：连续失败 5 次打开，冷却（默认 3 秒，重开翻倍、上限 60 秒）后转半开，调度器的「读取排队任务」查询本身充当探测，任一次成功即复位。
+
+`chat-runner.js` 用它的 `allow()` 取代了原来那个「失败一次就永久 503」的布尔标记；`/api/health` 的 `chat.breaker` 暴露 `state / failures / openUntil / lastError`，`POST /api/chat/runs` 在熔断期返回 503 + `Retry-After`。**恢复不需要重启进程**。
+
+## 搜索适配层与依据摘要
+
+- `lib/search.js`：唯一可能访问公网的地方。未配置 provider/key、成员自己关闭、query 为空三种情况都直接返回 `disabled` 且**不产生任何 fetch**；`stub` 仅供测试，`tavily` 是骨架（配置后只降级、不外发）；超时与异常一律 `degraded`，回答照常。返回结果经 `sanitizeResults()` 清洗（只留 https、去凭据、截断长度、限量）。
+- `shared/evidence-summary.js`：纯函数，把消息的 `metadata.files / memories / search` 收敛成 `{total, label, items, network, degraded}`，供前端角标渲染与测试直接 import。检索为空时不产生负向措辞，只让角标消失。
+- `src/chat.js` 的角标是**新增**的一行（仅非审计视图），原有的 audit 分支一行未动；`visibleMessage()` 对非本人的消息额外把 `metadata.search` 清空（网络来源不跨账号共享）。
+
+## 项目共享
+
+`projects.shared` 是**资格标记**，不是可见性规则：所有读取路径仍然只查 `project_members`，被标记共享但未加入的项目对任何人都不可见。系统管理员在 `lib/admin.js` 的 `syncSharedProjects()` 里做全量对账（授予幂等、角色固定 `member`、从不降级或删除项目管理员、撤销仍走 `assertProjectAdminRemovable`），前端入口在 `src/shared-projects.js` 与 `src/control-panel.js`。
+
+## 素材生成
+
+`lib/images.js` 是装配入口 `createImageService({db, config, fetchImpl})`，返回 `{router, start, stop, health}`，由四块组成：
+
+- `image-sizes.js`：六档尺寸白名单与面积上限（服务端唯一真源，前端只能传 key）。
+- `image-store.js`：`image_jobs` 表**懒建**（与 `grounding-store.js` 同风格，不进 `database.js`），负责幂等键、认领、终态写入与重启态修复。
+- `image-upstream.js`：混元请求、六级失败分级、COS 白名单下载、magic-bytes 嗅探、维度解析与落盘（`0700/0600`，写在数据目录下、绝不写 `dist/`）。
+- `image-runner.js`：`imageConcurrency` 个工作协程，靠 `claimNext()` 的原子事务抢占任务；关闭时中止在飞任务并等待终态落库。
+- `image-policy.js`：内存计数（每账号 5/分钟、30/小时，全局排队上限），重启清零是 PRD 允许的行为。
+
+异步状态存在 SQLite 而不是内存，所以关闭面板、刷新页面、重启进程都能找回任务；`GET /api/images/jobs/:id/content` 是唯一的读图入口（同源，满足 `img-src 'self'`），并在 handler 内后设长缓存头覆盖 `/api/` 的 `no-store`。
 
 ## 浏览器工作区
 

@@ -50,6 +50,19 @@ test('sources never reference the sibling reference-project directory and the ve
     // 站点样式快照同样内置，不能留在兄弟目录里。
     assert.ok(fs.existsSync(path.join(root, 'src/vendor/optimized-styles.css')));
     assert.match(fs.readFileSync(path.join(root, 'src/base.css'), 'utf8'), /@import url\('\.\/vendor\/optimized-styles\.css'\)/);
+    // The whole repository (docs, deploy script, tests) must stay free of sibling-project paths,
+    // not just the source directories asserted above.
+    const everything = [];
+    for (const name of fs.readdirSync(root, { withFileTypes: true })) {
+        if (['node_modules', 'dist', 'var', '.git', '.graphify'].includes(name.name)) continue;
+        collectFiles(path.join(root, name.name), everything);
+    }
+    const repoOffenders = [];
+    for (const file of everything) {
+        if (!SOURCE_EXTENSIONS.has(path.extname(file).toLowerCase())) continue;
+        if (fs.readFileSync(file, 'utf8').split('\n').some(line => FORBIDDEN.test(line))) repoOffenders.push(path.relative(root, file));
+    }
+    assert.deepEqual(repoOffenders, [], 'repository-wide sibling references: ' + repoOffenders.join(', '));
 });
 
 // (c) 版本必须如实声明且三处一致：package.json、third_party/README.md、vendored 文件名。
@@ -62,6 +75,15 @@ test('declared marked version matches the vendored fileName and third_party note
     assert.match(notes, /src\/vendor\/marked-18\.0\.9\.mjs/);
     assert.ok(fs.existsSync(path.join(root, 'src/vendor/marked-18.0.9.mjs')));
     assert.equal('marked-' + manifest.dependencies.marked + '.mjs', 'marked-18.0.9.mjs');
+    // `npm ci` (fresh clone, deploy) refuses an out-of-sync lock file, so the lock has to
+    // declare exactly the same direct dependencies as the manifest.
+    const lock = JSON.parse(fs.readFileSync(path.join(root, 'package-lock.json'), 'utf8'));
+    const rootLock = lock.packages[''];
+    assert.deepEqual(rootLock.dependencies, manifest.dependencies, 'package-lock dependencies must match package.json');
+    assert.deepEqual(rootLock.devDependencies, manifest.devDependencies, 'package-lock devDependencies must match package.json');
+    for (const name of Object.keys(manifest.dependencies)) {
+        assert.ok(lock.packages['node_modules/' + name], 'missing lock entry for ' + name);
+    }
 });
 
 // 只真正构建一次：构建约 1-2 秒，避免同一文件里重复付出代价。
