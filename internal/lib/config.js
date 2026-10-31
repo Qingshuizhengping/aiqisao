@@ -19,6 +19,28 @@ function enumValue(value, allowed, fallback, message) {
     return normalized;
 }
 
+// Search providers are addressed by a short slug so a typo cannot point the adapter at an
+// arbitrary host. An empty string legitimately means "search disabled".
+function optionalProvider(value) {
+    const normalized = value === undefined ? '' : String(value).trim();
+    if (!normalized) return '';
+    if (!/^[a-z][a-z0-9_]{1,31}$/.test(normalized)) throw new Error('INTERNAL_SEARCH_PROVIDER must be a lowercase provider slug');
+    return normalized;
+}
+
+// Optional base URL must be a bare HTTPS origin: no credentials, query or fragment, so the
+// adapter cannot be redirected somewhere surprising.
+function optionalHttpsUrl(value) {
+    const normalized = value === undefined ? '' : String(value).trim();
+    if (!normalized) return '';
+    let url;
+    try { url = new URL(normalized); } catch { throw new Error('INTERNAL_SEARCH_BASE_URL must be a trusted HTTPS origin'); }
+    if (url.protocol !== 'https:' || url.username || url.password || url.search || url.hash) {
+        throw new Error('INTERNAL_SEARCH_BASE_URL must be a trusted HTTPS origin');
+    }
+    return normalized.replace(/\/+$/, '');
+}
+
 export function createConfig(env = process.env) {
     const origin = new URL(env.INTERNAL_ORIGIN || 'http://127.0.0.1:3001');
     if (origin.pathname !== '/' || origin.search || origin.hash || origin.username || origin.password) throw new Error('INTERNAL_ORIGIN must contain only an origin');
@@ -31,6 +53,8 @@ export function createConfig(env = process.env) {
     const apiUrl = new URL(apiBase);
     if (apiUrl.protocol !== 'https:' || apiUrl.username || apiUrl.password || apiUrl.search || apiUrl.hash) throw new Error('Model API requires a trusted HTTPS base');
     const chatModel = env.INTERNAL_CHAT_MODEL || 'zai-org/GLM-5.3-Flash';
+    const searchProvider = optionalProvider(env.INTERNAL_SEARCH_PROVIDER);
+    const searchApiKey = env.INTERNAL_SEARCH_API_KEY || '';
     return {
         origin: origin.origin,
         host: env.INTERNAL_HOST || '127.0.0.1',
@@ -54,6 +78,15 @@ export function createConfig(env = process.env) {
         // Storage breaker cooldown. Exposed only so tests can shrink the wait to ~80ms;
         // production keeps three seconds.
         chatBreakerCooldownMs: boundedNumber(env.INTERNAL_CHAT_BREAKER_COOLDOWN_MS, 3000, 50, 600000),
+        // R1-05: web search adapter. Empty provider/key means "no search at all" — the
+        // adapter then answers 'disabled' without touching the network.
+        searchProvider,
+        searchApiKey,
+        searchBaseUrl: optionalHttpsUrl(env.INTERNAL_SEARCH_BASE_URL),
+        searchTimeoutMs: boundedNumber(env.INTERNAL_SEARCH_TIMEOUT_MS, 8000, 1000, 30000),
+        searchMaxResults: boundedNumber(env.INTERNAL_SEARCH_MAX_RESULTS, 5, 1, 10),
+        // Read-only derivation: never a second environment override.
+        searchEnabled: Boolean(searchProvider && searchApiKey),
         dataDirectory: path.resolve(APP_DIRECTORY, env.INTERNAL_DATA_DIRECTORY || 'var'),
         chatConcurrency: boundedNumber(env.INTERNAL_CHAT_CONCURRENCY, 4, 1, 8),
         chatQueueCapacity: 32,

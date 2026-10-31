@@ -190,9 +190,19 @@ export function createAuth({ db, config }) {
 
     router.patch('/preferences', requireReadyUser, (request, response, next) => {
         try {
-            if (!request.body || Object.keys(request.body).some(key => key !== 'autoMemoryEnabled') || typeof request.body.autoMemoryEnabled !== 'boolean') fail(400, 'INVALID_PREFERENCES', '偏好设置无效。');
-            db.prepare('UPDATE users SET auto_memory_enabled=?,updated_at=? WHERE id=?').run(Number(request.body.autoMemoryEnabled), now(), request.user.id);
-            audit(db, request.user, 'user.preferences', 'user', request.user.id, { autoMemoryEnabled: request.body.autoMemoryEnabled });
+            const body = request.body && typeof request.body === 'object' ? request.body : {};
+            const keys = Object.keys(body);
+            // R1-06: the whitelist grows by one key and requires at least one of them, so
+            // an unknown key (e.g. {systemRole:'admin'}) is still rejected with 400.
+            const allowed = ['autoMemoryEnabled', 'searchEnabled'];
+            if (!keys.length || keys.some(key => !allowed.includes(key))) fail(400, 'INVALID_PREFERENCES', '偏好设置无效。');
+            for (const key of keys) if (typeof body[key] !== 'boolean') fail(400, 'INVALID_PREFERENCES', '偏好设置无效。');
+            const current = db.prepare('SELECT auto_memory_enabled,search_enabled FROM users WHERE id=?').get(request.user.id);
+            const autoMemoryEnabled = 'autoMemoryEnabled' in body ? body.autoMemoryEnabled : Boolean(current?.auto_memory_enabled);
+            const searchEnabled = 'searchEnabled' in body ? body.searchEnabled : current?.search_enabled === undefined ? true : Boolean(current.search_enabled);
+            db.prepare('UPDATE users SET auto_memory_enabled=?,search_enabled=?,updated_at=? WHERE id=?')
+                .run(Number(autoMemoryEnabled), Number(searchEnabled), now(), request.user.id);
+            audit(db, request.user, 'user.preferences', 'user', request.user.id, { autoMemoryEnabled, searchEnabled });
             response.json({ user: publicUser(db.prepare('SELECT * FROM users WHERE id=?').get(request.user.id), db) });
         } catch (error) { next(error); }
     });

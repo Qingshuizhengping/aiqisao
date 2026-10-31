@@ -4,6 +4,9 @@ import { fail } from './errors.js';
 export function publicUser(row, db) {
     return { id: row.id, username: row.username, displayName: row.display_name,
         systemRole: row.system_role, autoMemoryEnabled: Boolean(row.auto_memory_enabled),
+        // R1-06: the member's own search preference travels with every actor so
+        // buildContext can honour it without a second query.
+        searchEnabled: row.search_enabled === undefined || row.search_enabled === null ? true : Boolean(row.search_enabled),
         mustChangePassword: Boolean(row.must_change_password), mfaEnabled: false, mfaRequired: false };
 }
 

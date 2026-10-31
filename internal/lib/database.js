@@ -2,6 +2,21 @@ import Database from 'better-sqlite3';
 import fs from 'node:fs';
 import path from 'node:path';
 
+/**
+ * Adds a column only when it is missing, so the schema can grow without a migration
+ * framework (the same manual ALTER style this file already used for `users.deleted_at`).
+ *
+ * @param {import('better-sqlite3').Database} db Open database handle.
+ * @param {string} table Table name (trusted constant, never user input).
+ * @param {string} column Column name (trusted constant).
+ * @param {string} definition SQL column definition, e.g. 'INTEGER NOT NULL DEFAULT 1'.
+ * @returns {void}
+ */
+function addColumnIfMissing(db, table, column, definition) {
+    const exists = db.prepare('PRAGMA table_info(' + table + ')').all().some(entry => entry.name === column);
+    if (!exists) db.exec('ALTER TABLE ' + table + ' ADD COLUMN ' + column + ' ' + definition);
+}
+
 export function openDatabase(filename) {
     if (filename !== ':memory:') {
         const directory = path.dirname(path.resolve(filename));
@@ -24,6 +39,7 @@ export function openDatabase(filename) {
             active INTEGER NOT NULL DEFAULT 1 CHECK(active IN (0,1)),
             must_change_password INTEGER NOT NULL DEFAULT 0 CHECK(must_change_password IN (0,1)),
             auto_memory_enabled INTEGER NOT NULL DEFAULT 1 CHECK(auto_memory_enabled IN (0,1)),
+            search_enabled INTEGER NOT NULL DEFAULT 1 CHECK(search_enabled IN (0,1)),
             mfa_secret TEXT,
             mfa_last_step INTEGER,
             deleted_at INTEGER CHECK(deleted_at IS NULL OR active=0),
@@ -111,9 +127,10 @@ export function openDatabase(filename) {
         CREATE INDEX IF NOT EXISTS audit_created ON audit_records(created_at);
         CREATE INDEX IF NOT EXISTS audit_actor ON audit_records(actor_id,created_at);
     `);
-    if (!db.prepare('PRAGMA table_info(users)').all().some(column => column.name === 'deleted_at')) {
-        db.exec('ALTER TABLE users ADD COLUMN deleted_at INTEGER CHECK(deleted_at IS NULL OR active=0)');
-    }
+    // Column migrations (existing databases keep their data). R1-06 adds the per-member
+    // search preference; the default keeps current behaviour (search allowed).
+    addColumnIfMissing(db, 'users', 'deleted_at', 'INTEGER CHECK(deleted_at IS NULL OR active=0)');
+    addColumnIfMissing(db, 'users', 'search_enabled', 'INTEGER NOT NULL DEFAULT 1 CHECK(search_enabled IN (0,1))');
     db.exec('CREATE INDEX IF NOT EXISTS users_status ON users(deleted_at,active,system_role)');
     if (filename !== ':memory:') {
         for (const suffix of ['', '-wal', '-shm']) {

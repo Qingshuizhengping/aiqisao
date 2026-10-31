@@ -429,3 +429,19 @@ small { color: var(--muted); }
 .knowledge-format-help { color: var(--muted); font-size: 12px; line-height: 1.7; }
 .knowledge-format-help summary { cursor: pointer; padding: 7px 0; }
 .knowledge-format-help summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; border-radius: 4px; }
+
+/* R1-03 依据角标：普通成员视图在回答正文下方显示一行「参考 N 条资料 / 来自网络 N 条」，
+   展开后可看到具体来源。审计视图继续使用原有的 reference-list 样式，两者互不影响。 */
+.evidence-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; width: 100%; margin-top: 2px; }
+.evidence-row .evidence-chip { min-height: 30px; padding: 4px 10px; font-size: 11px; box-shadow: none; }
+.evidence-row .evidence-chip[aria-expanded="true"] { color: var(--accent); background: var(--accent-soft); border-color: rgba(74, 103, 65, .2); }
+.evidence-list { display: flex; flex-direction: column; gap: 6px; width: 100%; padding: 9px 11px; margin-top: 2px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface); }
+.evidence-item { display: flex; align-items: center; gap: 8px; min-width: 0; font-size: 11px; line-height: 1.7; color: var(--secondary); }
+.evidence-item .badge { flex-shrink: 0; }
+.evidence-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--secondary); text-decoration: none; }
+a.evidence-title { color: var(--accent); text-underline-offset: 3px; }
+a.evidence-title:hover { text-decoration: underline; }
+@media (max-width: 720px) {
+    .evidence-row .evidence-chip { min-height: 44px; }
+    .evidence-item { align-items: flex-start; }
+}

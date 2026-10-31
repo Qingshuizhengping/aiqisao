@@ -3,6 +3,7 @@ import { api, subscribeRun } from './api.js';
 import { el, button, icon, notice, badge, toast, formatDate } from './ui.js';
 import { createDraftRepository, createDraftBinding } from './workspace-controller.js';
 import { groundingPresentation, citationNumber, answerVisibleContent } from './grounding-state.js';
+import { evidenceSummary } from '../shared/evidence-summary.js';
 
 const draftPrefix = 'weizhiyu-internal-draft:';
 const terminal = new Set(['completed', 'stopped', 'failed', 'interrupted']);
@@ -19,6 +20,35 @@ export function activateDraftOwner(userId) {
 
 function draftKey(userId, conversationId, projectId) {
     return draftPrefix + userId + ':' + (conversationId || 'new-' + (projectId || 'personal'));
+}
+
+/**
+ * R1-03 evidence badge. This is an *additional* row for the ordinary (non-audit) view: the
+ * audit-only branch below keeps rendering memories, files and citations exactly as before,
+ * so `shared/answer-presentation.js` and its 13 tests stay untouched.
+ *
+ * @param {Object} message Chat message.
+ * @param {{audit?: boolean}} [options] View options.
+ * @returns {HTMLElement|null} Evidence row, or null when the answer used nothing.
+ */
+function evidenceRow(message, { audit = false } = {}) {
+    if (audit) return null;
+    const summary = evidenceSummary(message?.metadata || {});
+    const chipLabel = [summary.label, summary.network.label].filter(Boolean).join(' · ');
+    if (!chipLabel) return null;
+    const list = el('div', { className: 'evidence-list', hidden: true });
+    for (const item of summary.items) {
+        list.append(el('div', { className: 'evidence-item' },
+            badge(item.label), item.url
+                ? el('a', { className: 'evidence-title', href: item.url, target: '_blank', rel: 'noopener noreferrer', text: item.title })
+                : el('span', { className: 'evidence-title', text: item.title })));
+    }
+    const trigger = button(chipLabel, () => {
+        list.hidden = !list.hidden;
+        trigger.setAttribute('aria-expanded', String(!list.hidden));
+    }, { className: 'chip evidence-chip', name: '依据' });
+    trigger.setAttribute('aria-expanded', 'false');
+    return el('div', { className: 'evidence-row' }, trigger, list);
 }
 
 export function messageView(message, { audit = false } = {}) {
@@ -49,6 +79,9 @@ export function messageView(message, { audit = false } = {}) {
         tools.replaceChildren(...[
             value.status === 'generating' && el('span', { className: 'generating-dot', 'aria-hidden': 'true' }),
             state && el('span', { className: 'message-state', role: 'status', text: state }),
+            // Ordinary members see a single neutral badge; the audit view keeps its detailed
+            // reference lists below (unchanged contract).
+            evidenceRow(value, { audit }),
             audit && grounding.status && badge(grounding.status, grounding.tone),
             visibleContent && button('复制', async () => {
                 try { await navigator.clipboard.writeText(answerVisibleContent(message, { audit })); toast('回答已复制。'); }

@@ -11,6 +11,7 @@ import { createAdminRouter } from './lib/admin.js';
 import { createMemoryService } from './lib/memory.js';
 import { createKnowledgeService } from './lib/knowledge.js';
 import { createChatService } from './lib/chat.js';
+import { createSearch } from './lib/search.js';
 import { createProvider } from './lib/provider.js';
 import { createGroundingLibrary } from './lib/grounding-library.js';
 import { createGroundingRetrieval } from './lib/grounding-retrieval.js';
@@ -19,10 +20,12 @@ import { AppError } from './lib/errors.js';
 
 export const VERSION = 'internal-v20261030-3';
 
-export function createApplication({ config, database, provider: suppliedProvider } = {}) {
+export function createApplication({ config, database, provider: suppliedProvider, fetchImpl } = {}) {
     config ||= createConfig();
     const db = database || openDatabase(path.join(config.dataDirectory, 'internal.sqlite'));
     const provider = suppliedProvider || createProvider({ config });
+    // R1-05: the search adapter is assembled here so its transport can be injected in tests.
+    const search = createSearch({ config, fetchImpl });
     const auth = createAuth({ db, config });
     const memory = createMemoryService({ db, config, provider });
     const knowledge = createKnowledgeService({ db, config, provider });
@@ -36,7 +39,7 @@ export function createApplication({ config, database, provider: suppliedProvider
     // configs fall back to the documented default 'free'.
     const groundingMode = config.groundingMode === undefined || config.groundingMode === null ? 'free' : config.groundingMode;
     if (groundingMode !== 'free' && groundingMode !== 'strict') throw new Error('INTERNAL_GROUNDING_MODE must be strict or free');
-    const chat = createChatService({ db, config, provider, memory, knowledge, grounding: groundingMode === 'strict' ? grounding : null });
+    const chat = createChatService({ db, config, provider, memory, knowledge, search, grounding: groundingMode === 'strict' ? grounding : null });
     const app = express();
     let ready = false;
     let started = false;
@@ -61,6 +64,7 @@ export function createApplication({ config, database, provider: suppliedProvider
             chat: { ready: state.ready, active: state.active,
                 breaker: state.breaker || { state: 'closed', failures: 0, openUntil: null, lastError: null } },
             memory: memory.health(), knowledge: knowledge.health(),
+            search: search.health(),
             grounding: { mode: groundingMode, ready }, modelConfigured: Boolean(config.apiKey) });
     });
     app.use('/api', auth.guardOrigin);
@@ -121,7 +125,7 @@ export function createApplication({ config, database, provider: suppliedProvider
         if (!database) db.close();
     }
 
-    return { app, db, auth, memory, knowledge, chat, grounding, groundingLibrary, groundingRetrieval, config, startServices, close };
+    return { app, db, auth, memory, knowledge, chat, search, grounding, groundingLibrary, groundingRetrieval, config, startServices, close };
 }
 
 export async function startServer(options = {}) {

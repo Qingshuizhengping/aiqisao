@@ -24,7 +24,7 @@ export async function fixture(context, options = {}) {
     const provider = { async *chat(messages, args) { calls.push(messages); yield '**测试**\n\n正常回答。'; },
         async embed(texts) { return texts.map(() => [1, 0, 0, 0]); },
         async extractMemory(input) { extraction.push(input); return { memories: [] }; }, ...options.provider };
-    const application = createApplication({ config, database: db, provider });
+    const application = createApplication({ config, database: db, provider, fetchImpl: options.fetchImpl });
     const server = application.app.listen(0, '127.0.0.1');
     await new Promise(resolve => server.once('listening', resolve));
     context.after(async () => {
@@ -35,11 +35,11 @@ export async function fixture(context, options = {}) {
     });
     if (options.start !== false) await application.startServices();
     const port = server.address().port;
-    function employee(name, role = 'member') {
+    function employee(name, role = 'member', { searchEnabled = true } = {}) {
         const id = randomUUID();
         const now = Date.now();
-        db.prepare(`INSERT INTO users(id,username,display_name,password_hash,system_role,created_at,updated_at)
-            VALUES(?,?,?,?,?,?,?)`).run(id, name, name, 'unused-test-password', role, now, now);
+        db.prepare(`INSERT INTO users(id,username,display_name,password_hash,system_role,search_enabled,created_at,updated_at)
+            VALUES(?,?,?,?,?,?,?,?)`).run(id, name, name, 'unused-test-password', role, Number(searchEnabled), now, now);
         const token = randomBytes(32).toString('base64url');
         const csrf = randomBytes(24).toString('base64url');
         db.prepare('INSERT INTO sessions(id,user_id,csrf_token,created_at,expires_at) VALUES(?,?,?,?,?)')

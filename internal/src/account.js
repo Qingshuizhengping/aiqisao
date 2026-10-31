@@ -51,13 +51,30 @@ export function passwordScreen(user, onChanged, onLogout) {
 export function accountPanel(user, { onUserChanged, onLogout }) {
     const memoryEnabled = el('input', { type: 'checkbox', checked: user.autoMemoryEnabled });
     const preferenceErrors = el('div');
-    const preferenceForm = el('form', { className: 'stack-tight' }, el('label', { className: 'check-field' }, memoryEnabled, el('span', { text: '自动整理我的长期记忆' })), el('small', { text: '关闭后不再从新对话提取记忆；已保存的记忆仍可在记忆库管理。' }), preferenceErrors);
+    // R1-06: the search switch only exists when the server has a provider configured, so a
+    // deployment without search shows no dead control.
+    const searchEnabled = el('input', { type: 'checkbox', checked: user.searchEnabled !== false });
+    const searchBlock = el('div', { className: 'stack-tight', hidden: true },
+        el('label', { className: 'check-field' }, searchEnabled, el('span', { text: '允许联网搜索' })),
+        el('small', { text: '开启后，回答时会检索公开网页并附上来源链接；关闭后只用记忆库和资料文件。' }));
+    const preferenceForm = el('form', { className: 'stack-tight' }, el('label', { className: 'check-field' }, memoryEnabled, el('span', { text: '自动整理我的长期记忆' })), el('small', { text: '关闭后不再从新对话提取记忆；已保存的记忆仍可在记忆库管理。' }), searchBlock, preferenceErrors);
     memoryEnabled.addEventListener('change', () => submitting(preferenceForm, async () => {
         const data = await api('/api/auth/preferences', { method: 'PATCH', body: { autoMemoryEnabled: memoryEnabled.checked } });
         user = data.user;
         onUserChanged(data.user);
         toast('记忆偏好已保存。');
     }, preferenceErrors).then(() => { memoryEnabled.checked = user.autoMemoryEnabled; }));
+    searchEnabled.addEventListener('change', () => submitting(preferenceForm, async () => {
+        const data = await api('/api/auth/preferences', { method: 'PATCH', body: { searchEnabled: searchEnabled.checked } });
+        user = data.user;
+        onUserChanged(data.user);
+        toast('搜索偏好已保存。');
+    }, preferenceErrors).then(() => { searchEnabled.checked = user.searchEnabled !== false; }));
+    api('/api/health').then(health => {
+        if (!health?.search?.enabled) return;
+        searchEnabled.checked = user.searchEnabled !== false;
+        searchBlock.hidden = false;
+    }).catch(() => {});
     const current = input('当前密码', { type: 'password', autocomplete: 'current-password', required: true });
     const next = input('新密码', { type: 'password', autocomplete: 'new-password', minlength: 6, maxlength: 256, required: true, hint: '至少 6 位，可以使用纯数字。' });
     const repeat = input('确认新密码', { type: 'password', autocomplete: 'new-password', minlength: 6, maxlength: 256, required: true });
