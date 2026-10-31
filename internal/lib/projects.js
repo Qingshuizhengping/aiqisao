@@ -15,7 +15,8 @@ function text(value, maximum, required = false) {
 
 function projectView(db, user, row) {
     return { id: row.id, name: row.name, description: row.description, instructions: row.instructions,
-        archived: Boolean(row.archived), role: projectRole(db, user, row.id), createdBy: row.created_by,
+        archived: Boolean(row.archived), shared: Boolean(row.shared),
+        role: projectRole(db, user, row.id), createdBy: row.created_by,
         memberCount: db.prepare(`SELECT COUNT(*) AS count FROM project_members membership JOIN users employee ON employee.id=membership.user_id
             WHERE membership.project_id=? AND employee.active=1`).get(row.id).count,
         createdAt: row.created_at, updatedAt: row.updated_at };
@@ -34,6 +35,23 @@ export function createProjectsRouter({ db }) {
             const rows = db.prepare(`SELECT project.* FROM projects project JOIN project_members membership ON membership.project_id=project.id
                 WHERE membership.user_id=? ORDER BY project.archived,project.updated_at DESC,project.id`).all(request.user.id);
             response.json({ projects: rows.map(row => projectView(db, request.user, row)) });
+        } catch (error) { next(error); }
+    });
+
+    // R4-03: the projects this member joined *and* that are marked as shared. Registered
+    // before any `/:id` route so a future `GET /:id` can never shadow it. Visibility still
+    // comes from `project_members` alone: a shared project the member is not in is invisible.
+    router.get('/shared', (request, response, next) => {
+        try {
+            const rows = db.prepare(`SELECT project.* FROM projects project
+                JOIN project_members membership ON membership.project_id=project.id
+                JOIN users employee ON employee.id=membership.user_id
+                WHERE membership.user_id=? AND project.shared=1 AND employee.active=1 AND employee.deleted_at IS NULL
+                ORDER BY project.archived,project.updated_at DESC,project.id`).all(request.user.id);
+            response.json({ projects: rows.map(row => ({ id: row.id, name: row.name, role: projectRole(db, request.user, row.id),
+                memberCount: db.prepare(`SELECT COUNT(*) AS count FROM project_members membership JOIN users employee ON employee.id=membership.user_id
+                    WHERE membership.project_id=? AND employee.active=1 AND employee.deleted_at IS NULL`).get(row.id).count,
+                archived: Boolean(row.archived), updatedAt: row.updated_at })) });
         } catch (error) { next(error); }
     });
 
@@ -60,18 +78,23 @@ export function createProjectsRouter({ db }) {
         try {
             requireProjectAdmin(db, request.user, request.params.id);
             const { project: row } = requireProjectContext(db, request.user, request.params.id);
-            const input = objectInput(request.body, ['name', 'description', 'instructions', 'archived']);
+            const input = objectInput(request.body, ['name', 'description', 'instructions', 'archived', 'shared']);
             if (!Object.keys(input).length) fail(400, 'INVALID_PROJECT_INPUT', '请提供要修改的内容。');
             if (input.archived !== undefined && typeof input.archived !== 'boolean') fail(400, 'INVALID_PROJECT_INPUT', '归档设置无效。');
+            // Only a project administrator may publish a project for cross-account grants, and
+            // an archived project has to be restored first (same rule as every other edit).
+            if (input.shared !== undefined && typeof input.shared !== 'boolean') fail(400, 'INVALID_PROJECT_INPUT', '共享设置无效。');
             if (row.archived && (input.archived !== false || Object.keys(input).some(key => key !== 'archived'))) fail(409, 'PROJECT_ARCHIVED', '请先恢复项目，再修改内容。');
             const name = input.name === undefined ? row.name : text(input.name, 80, true);
             const description = input.description === undefined ? row.description : text(input.description, 6000);
             const instructions = input.instructions === undefined ? row.instructions : text(input.instructions, 12000);
             const archived = input.archived === undefined ? row.archived : Number(input.archived);
+            const shared = input.shared === undefined ? Number(row.shared || 0) : Number(input.shared);
             db.transaction(() => {
-                db.prepare('UPDATE projects SET name=?,description=?,instructions=?,archived=?,updated_at=? WHERE id=?')
-                    .run(name, description, instructions, archived, Date.now(), row.id);
+                db.prepare('UPDATE projects SET name=?,description=?,instructions=?,archived=?,shared=?,updated_at=? WHERE id=?')
+                    .run(name, description, instructions, archived, shared, Date.now(), row.id);
                 audit(db, request.user, 'project.update', 'project', row.id, { fields: Object.keys(input).join(','), archived: Boolean(archived) });
+                if (input.shared !== undefined) audit(db, request.user, 'project.share_update', 'project', row.id, { shared: Boolean(shared) });
             })();
             response.json({ project: projectView(db, request.user, db.prepare('SELECT * FROM projects WHERE id=?').get(row.id)) });
         } catch (error) { next(error); }

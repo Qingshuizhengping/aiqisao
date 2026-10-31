@@ -131,6 +131,11 @@ export function openDatabase(filename) {
     // search preference; the default keeps current behaviour (search allowed).
     addColumnIfMissing(db, 'users', 'deleted_at', 'INTEGER CHECK(deleted_at IS NULL OR active=0)');
     addColumnIfMissing(db, 'users', 'search_enabled', 'INTEGER NOT NULL DEFAULT 1 CHECK(search_enabled IN (0,1))');
+    // R4-01: `shared` marks a project as *grantable* to other members from the control panel.
+    // It is a qualification, not a visibility rule: every read path still goes through
+    // `project_members` (see lib/projects.js and lib/access.js).
+    addColumnIfMissing(db, 'projects', 'shared', 'INTEGER NOT NULL DEFAULT 0 CHECK(shared IN (0,1))');
+    db.exec('CREATE INDEX IF NOT EXISTS projects_shared ON projects(shared,archived)');
     db.exec('CREATE INDEX IF NOT EXISTS users_status ON users(deleted_at,active,system_role)');
     if (filename !== ':memory:') {
         for (const suffix of ['', '-wal', '-shm']) {

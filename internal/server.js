@@ -108,7 +108,7 @@ export function createApplication({ config, database, provider: suppliedProvider
         const safe = error instanceof AppError;
         const status = safe ? error.status : error.type === 'entity.too.large' ? 413 : error.type === 'entity.parse.failed' ? 400 : 500;
         const code = safe ? error.code : status === 413 ? 'REQUEST_TOO_LARGE' : status === 400 ? 'INVALID_JSON' : 'INTERNAL_ERROR';
-        if (status >= 500) console.error(JSON.stringify({ event: 'internal_api_error', code, status }));
+        if (status >= 500) console.error(JSON.stringify({ event: 'internal_api_error', code, status, }));
         response.status(status).json({ error: { code, message: safe ? error.message : status === 413 ? '请求内容过大。' : status === 400 ? '请求格式无效。' : '服务暂时不可用，请稍后重试。' } });
     });
 

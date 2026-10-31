@@ -28,9 +28,12 @@ function projectView(row, db) {
     const counts = db.prepare(`SELECT COUNT(*) AS memberCount,COALESCE(SUM(membership.role='admin'),0) AS adminCount
         FROM project_members membership JOIN users employee ON employee.id=membership.user_id
         WHERE membership.project_id=? AND employee.active=1 AND employee.deleted_at IS NULL`).get(row.id);
-    return { id: row.id, name: row.name, archived: Boolean(row.archived), ...counts,
+    return { id: row.id, name: row.name, archived: Boolean(row.archived), shared: Boolean(row.shared), ...counts,
         createdBy: row.created_by, createdAt: row.created_at, updatedAt: row.updated_at };
 }
+
+/** Maximum number of shared projects one account may be granted. */
+const SHARED_PROJECT_LIMIT = 50;
 
 function pagination(query) {
     const limit = query.limit === undefined ? 50 : Number(query.limit);
@@ -106,6 +109,71 @@ export function createAdminRouter({ db }) {
         return row;
     }
 
+    /**
+     * Validates the `sharedProjectIds` body field.
+     *
+     * @param {unknown} value Raw `sharedProjectIds` value (`undefined` means "not provided").
+     * @returns {string[]|null} Unique ids, or null when the field was omitted.
+     */
+    function parseSharedProjectIds(value) {
+        if (value === undefined) return null;
+        if (!Array.isArray(value) || value.some(id => typeof id !== 'string' || !id.trim())) {
+            fail(400, 'INVALID_SHARED_PROJECTS', '共享项目参数无效。');
+        }
+        const unique = [...new Set(value.map(id => id.trim()))];
+        if (unique.length > SHARED_PROJECT_LIMIT) fail(409, 'SHARED_PROJECT_LIMIT', '单个账号最多授权 ' + SHARED_PROJECT_LIMIT + ' 个共享项目。');
+        for (const id of unique) {
+            const project = db.prepare('SELECT shared,archived FROM projects WHERE id=?').get(id);
+            // Unknown ids answer the same way as un-shared ones: the control panel only ever
+            // offers eligible projects, and existence should not leak through this endpoint.
+            if (!project || !project.shared || project.archived) fail(409, 'PROJECT_NOT_SHARED', '只能授权已共享且未归档的项目。');
+        }
+        return unique;
+    }
+
+    /**
+     * Reconciles an account's shared-project grants inside the caller's transaction.
+     *
+     * Semantics (R4-02):
+     *  - grants are idempotent (`ON CONFLICT DO NOTHING`) and always `role='member'`;
+     *  - an existing `admin` membership is never downgraded or deleted here;
+     *  - revoking only removes `member` rows, still guarded by `assertProjectAdminRemovable`.
+     *
+     * @param {Object} actor The acting system administrator.
+     * @param {Object} row Target user row.
+     * @param {string[]} ids Requested project ids.
+     * @returns {{granted: number, revoked: number}} Applied changes.
+     */
+    function syncSharedProjects(actor, row, ids) {
+        const current = new Map(db.prepare('SELECT project_id,role FROM project_members WHERE user_id=?').all(row.id)
+            .map(item => [item.project_id, item.role]));
+        const target = new Set(ids);
+        let granted = 0;
+        let revoked = 0;
+        for (const projectId of target) {
+            if (current.has(projectId)) continue;
+            const changed = db.prepare(`INSERT INTO project_members(project_id,user_id,role,created_at) VALUES(?,?,'member',?)
+                ON CONFLICT(project_id,user_id) DO NOTHING`).run(projectId, row.id, Date.now());
+            if (changed.changes) {
+                granted += 1;
+                db.prepare('UPDATE projects SET updated_at=? WHERE id=?').run(Date.now(), projectId);
+            }
+        }
+        for (const [projectId, role] of current) {
+            // Admins are managed inside the project, never from this control panel.
+            if (target.has(projectId) || role !== 'member') continue;
+            assertProjectAdminRemovable(db, projectId, row.id, null);
+            const changed = db.prepare("DELETE FROM project_members WHERE project_id=? AND user_id=? AND role='member'").run(projectId, row.id);
+            if (changed.changes) {
+                revoked += 1;
+                db.prepare('UPDATE projects SET updated_at=? WHERE id=?').run(Date.now(), projectId);
+            }
+        }
+        audit(db, actor, 'admin.shared_project_sync', 'user', row.id,
+            { granted, revoked, projectIdCount: target.size, projectIds: [...target].join(',') });
+        return { granted, revoked };
+    }
+
     function filteredUsers(query) {
         const { limit, offset } = pagination(query);
         for (const field of ['q', 'status', 'systemRole']) {
@@ -159,7 +227,8 @@ export function createAdminRouter({ db }) {
     });
 
     router.post('/users', asyncRoute(async (request, response) => {
-        const input = objectInput(request.body, ['username', 'displayName', 'password', 'systemRole']);
+        const input = objectInput(request.body, ['username', 'displayName', 'password', 'systemRole', 'sharedProjectIds']);
+        const grantIds = parseSharedProjectIds(input.sharedProjectIds);
         const username = validateUsername(input.username);
         const name = displayName(input.displayName);
         const role = input.systemRole ?? 'member';
@@ -174,13 +243,14 @@ export function createAdminRouter({ db }) {
             db.prepare(`INSERT INTO users(id,username,display_name,password_hash,system_role,must_change_password,created_at,updated_at)
                 VALUES(?,?,?,?,?,1,?,?)`).run(id, username, name, passwordHash, role, time, time);
             audit(db, request.user, 'admin.user_create', 'user', id, { systemRole: role });
+            if (grantIds) syncSharedProjects(request.user, { id }, grantIds);
         })();
         response.status(201).json({ user: userView(db.prepare('SELECT * FROM users WHERE id=?').get(id), db) });
     }));
 
     router.patch('/users/:id', (request, response, next) => {
         try {
-            const input = objectInput(request.body, ['displayName', 'active', 'systemRole']);
+            const input = objectInput(request.body, ['displayName', 'active', 'systemRole', 'sharedProjectIds']);
             if (!Object.keys(input).length) fail(400, 'INVALID_ADMIN_INPUT', '请提供要修改的设置。');
             const row = targetUser(request.params.id);
             const name = input.displayName === undefined ? row.display_name : displayName(input.displayName);
@@ -189,12 +259,17 @@ export function createAdminRouter({ db }) {
             const role = input.systemRole === undefined ? row.system_role : input.systemRole;
             if (!['admin', 'member'].includes(role)) fail(400, 'INVALID_SYSTEM_ROLE', '系统角色无效。');
             if (row.id === request.user.id && (!active || role !== 'admin')) fail(409, 'SELF_ADMIN_PROTECTED', '不能停用或撤销自己的管理员权限。');
+            const grantIds = parseSharedProjectIds(input.sharedProjectIds);
+            // Same rule as the single-project endpoint: a disabled or deleted account cannot
+            // be granted new project access.
+            if (grantIds && (!active || row.deleted_at !== null)) fail(409, 'USER_INACTIVE', '请先启用账号，再分配项目权限。');
             db.transaction(() => {
                 currentAdmin(request);
                 protectAccount(row, active, role);
                 db.prepare('UPDATE users SET display_name=?,active=?,system_role=?,updated_at=? WHERE id=?').run(name, active, role, Date.now(), row.id);
                 if (!active || role !== row.system_role) db.prepare('DELETE FROM sessions WHERE user_id=?').run(row.id);
                 audit(db, request.user, 'admin.user_update', 'user', row.id, { active: Boolean(active), systemRole: role });
+                if (grantIds) syncSharedProjects(request.user, row, grantIds);
             })();
             response.json({ user: userView(db.prepare('SELECT * FROM users WHERE id=?').get(row.id), db) });
         } catch (error) { next(error); }
