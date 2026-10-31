@@ -23,6 +23,8 @@ await writeFile(path.join(destination, 'index.html'), html);
 await cp(path.join(root, 'public'), destination, { recursive: true });
 const worker = (await readFile(path.join(root, 'public/sw.js'), 'utf8')).replace('weizhiyu-internal-shell-v1', 'weizhiyu-internal-shell-' + version);
 await writeFile(path.join(destination, 'sw.js'), worker);
-const notices = await readFile(path.join(root, '../optimized/src/vendor/marked-18.0.9.LICENSE'), 'utf8');
+// The license ships inside this repository (third_party/) so that `internal/`
+// builds standalone, without a sibling reference-project checkout.
+const notices = await readFile(path.join(root, 'third_party', 'marked-18.0.9.LICENSE'), 'utf8');
 await writeFile(path.join(destination, 'THIRD_PARTY_NOTICES.txt'), notices);
 console.log(JSON.stringify({ built: true, version, directory: destination }));

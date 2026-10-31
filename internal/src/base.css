@@ -1,4 +1,4 @@
-@import url('../../optimized/src/styles.css');
+@import url('./vendor/optimized-styles.css');
 
 :root{--canvas:#f8faf7;--surface:rgba(255,255,255,.64);--surface-strong:rgba(255,255,255,.88);--ink:#1f2922;--secondary:#637169;--muted:#8b958d;--line:rgba(43,66,49,.09);--accent:#4a6741;--accent-soft:rgba(74,103,65,.09);--shadow:0 2px 5px rgba(24,47,27,.025),0 15px 42px -28px rgba(24,47,27,.2);--app-height:100dvh;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','PingFang SC','Microsoft YaHei',sans-serif;color-scheme:light}
 [data-theme=dark]{--canvas:#101510;--surface:rgba(28,36,29,.68);--surface-strong:rgba(30,39,32,.96);--ink:#edf2eb;--secondary:#a5b3a6;--muted:#7d8e7f;--line:rgba(226,238,224,.09);--accent:#a4bf92;--accent-soft:rgba(164,191,146,.1);--shadow:0 14px 42px -22px rgba(0,0,0,.5);color-scheme:dark}

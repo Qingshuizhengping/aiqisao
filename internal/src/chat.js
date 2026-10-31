@@ -1,4 +1,4 @@
-import { renderMarkdown } from '../../optimized/src/markdown.js';
+import { renderMarkdown } from './vendor/markdown.js';
 import { api, subscribeRun } from './api.js';
 import { el, button, icon, notice, badge, toast, formatDate } from './ui.js';
 import { createDraftRepository, createDraftBinding } from './workspace-controller.js';
