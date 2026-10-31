@@ -74,8 +74,8 @@ test('explicit strict mode runs the four-stage pipeline and never calls the stre
 });
 
 test('injecting a provider never changes the configured mode', async context => {
-    // Regression guard for the deleted `strictGrounding !== false || !suppliedProvider`
-    // rule: a fake provider used to be an implicit request for the fixture branch.
+    // Regression guard for the deleted rule that treated an injected provider as an
+    // implicit request for the transport-fixture branch.
     const probe = pipelineProbe();
     const f = await fixture(context, { config: { groundingMode: 'free' }, provider: probe.provider });
     const person = f.employee('mode_free_with_provider');

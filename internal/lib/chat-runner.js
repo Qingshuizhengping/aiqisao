@@ -1,5 +1,6 @@
 import { AppError, fail } from './errors.js';
 import { CHAT_TERMINAL as TERMINAL } from './chat-service.js';
+import { createStorageBreaker } from './storage-breaker.js';
 
 const ACTIVE = new Set(['queued', 'running']);
 
@@ -9,8 +10,17 @@ export function createChatRunner({ db, config, provider, memory, domain }) {
     const subscribers = new Map();
     let started = false;
     let closed = false;
-    let storageFailure = false;
     let wakeScheduled = false;
+    // H1: one breaker replaces the old `storageFailure` boolean. A boolean could only
+    // latch "broken" until the process restarted; the breaker re-probes storage after a
+    // short cooldown and heals itself as soon as a read succeeds again.
+    const breaker = createStorageBreaker({
+        threshold: 5,
+        cooldownMs: config.chatBreakerCooldownMs || 3000,
+        // Once the cooldown expires, wake the scheduler so its queued-runs read acts as
+        // the real probe (no extra synthetic query, no restart).
+        onOpen: () => schedule(),
+    });
 
     function snapshot(id, user) {
         const row = db.prepare('SELECT * FROM chat_runs WHERE id=?').get(id);
@@ -118,7 +128,7 @@ export function createChatRunner({ db, config, provider, memory, domain }) {
                         stopped ? '生成已停止，收到的内容已保留。' : '模型连接暂时不可用，已保留收到的内容。');
                     finish(run, worker, closed ? 'interrupted' : stopped ? 'stopped' : 'failed', safe);
                 } catch {
-                    storageFailure = true;
+                    breaker.recordFailure(error);
                     broadcast(run.id, 'error', { error: { code: 'CHAT_STORAGE_UNAVAILABLE', message: '聊天存储异常，请稍后重新同步，避免重复提交。' } });
                 }
             } finally {
@@ -131,17 +141,21 @@ export function createChatRunner({ db, config, provider, memory, domain }) {
     }
 
     function schedule() {
-        if (!started || closed || storageFailure || wakeScheduled) return;
+        if (!started || closed || !breaker.allow() || wakeScheduled) return;
         wakeScheduled = true;
         queueMicrotask(() => {
             wakeScheduled = false;
             try {
                 const available = (config.chatConcurrency || 4) - workers.size;
                 if (available <= 0) return;
-                for (const row of db.prepare("SELECT * FROM chat_runs WHERE state='queued' ORDER BY created_at LIMIT ?").all(available)) {
-                    if (!workers.has(row.id)) execute(row).catch(() => { storageFailure = true; });
+                const queued = db.prepare("SELECT * FROM chat_runs WHERE state='queued' ORDER BY created_at LIMIT ?").all(available);
+                // This read round-trip is the breaker's probe: if storage answers, it is
+                // healthy again and any previous outage is over.
+                breaker.recordSuccess();
+                for (const row of queued) {
+                    if (!workers.has(row.id)) execute(row).catch(failure => { breaker.recordFailure(failure); });
                 }
-            } catch { storageFailure = true; }
+            } catch (error) { breaker.recordFailure(error); }
         });
     }
 
@@ -182,5 +196,14 @@ export function createChatRunner({ db, config, provider, memory, domain }) {
         return () => { listeners.delete(listener); if (!listeners.size) subscribers.delete(id); };
     }
 
-    return { start, stop, snapshot, stopRun, schedule, subscribe, health: () => ({ ready: started && !closed && !storageFailure, active: workers.size }) };
+    return { start, stop, snapshot, stopRun, schedule, subscribe,
+        // `ready` is the gate used by `POST /api/chat/runs` and `/api/health`: it stays
+        // false while the breaker is open (clients get 503 + Retry-After), and turns true
+        // again on its own once a probe read succeeds. During half-open the breaker still
+        // reports not-ready on purpose, so a burst of requests cannot pile onto the probe.
+        health: () => {
+            const breakerState = breaker.state();
+            return { ready: started && !closed && breakerState === 'closed', active: workers.size,
+                breaker: breaker.snapshot() };
+        } };
 }

@@ -1,5 +1,4 @@
 import express from 'express';
-import { fail } from './errors.js';
 import { audit, requireReadyEmployee } from './access.js';
 import { CHAT_TERMINAL as TERMINAL } from './chat-service.js';
 
@@ -13,7 +12,15 @@ export function createChatRouter({ db, domain, runner }) {
     router.patch('/conversations/:id', (request, response) => response.json(domain.updateConversation(request.user, request.params.id, request.body || {})));
     router.delete('/conversations/:id', (request, response) => response.json(domain.deleteConversation(request.user, request.params.id, runner.stopRun)));
     router.post('/chat/runs', (request, response) => {
-        if (!runner.health().ready) fail(503, 'CHAT_NOT_READY', '聊天服务正在恢复，请稍后重试。');
+        const state = runner.health();
+        if (!state.ready) {
+            // H1: tell the client when to come back instead of returning a bare 503, so the
+            // frontend can say “约 N 秒后自动恢复” while the breaker cools down.
+            const wait = Math.max(1, Math.ceil(((state.breaker?.openUntil || Date.now() + 3000) - Date.now()) / 1000));
+            response.set('Retry-After', String(wait));
+            return response.status(503).json({ error: { code: 'CHAT_NOT_READY', message: '聊天服务正在恢复，请稍后重试。' },
+                retryAfterSeconds: wait });
+        }
         const result = domain.submitRun(request.user, request.body || {});
         response.status(result.reused ? 200 : 202).json({ run: result.run });
         if (!result.reused) runner.schedule();

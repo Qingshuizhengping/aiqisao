@@ -53,8 +53,14 @@ export function createApplication({ config, database, provider: suppliedProvider
     app.use(express.json({ limit: '256kb', strict: true }));
     app.get('/api/health', (request, response) => {
         const state = chat.health();
-        response.status(ready && state.ready ? 200 : 503).json({ status: ready && state.ready ? 'ok' : 'recovering',
-            version: VERSION, chatReady: ready && state.ready, memory: memory.health(), knowledge: knowledge.health(),
+        const healthy = ready && state.ready;
+        response.status(healthy ? 200 : 503).json({ status: healthy ? 'ok' : 'recovering',
+            version: VERSION, chatReady: healthy,
+            // H1: the breaker snapshot is part of the health contract so the control panel
+            // can show the last storage error without a restart.
+            chat: { ready: state.ready, active: state.active,
+                breaker: state.breaker || { state: 'closed', failures: 0, openUntil: null, lastError: null } },
+            memory: memory.health(), knowledge: knowledge.health(),
             grounding: { mode: groundingMode, ready }, modelConfigured: Boolean(config.apiKey) });
     });
     app.use('/api', auth.guardOrigin);

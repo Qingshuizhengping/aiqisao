@@ -48,7 +48,7 @@ export function createConfig(env = process.env) {
         apiKey: env.INTERNAL_API_KEY || '',
         // H3: the one and only switch for the answer pipeline. 'free' is the default
         // (open answer, streaming provider) and 'strict' rolls back to the four-stage
-        // evidence gate. Replaces the deleted `strictGrounding` flag.
+        // evidence gate. It replaces the deleted legacy boolean flag (see T02 notes).
         groundingMode: enumValue(env.INTERNAL_GROUNDING_MODE, ['free', 'strict'], 'free',
             'INTERNAL_GROUNDING_MODE must be strict or free'),
         // Storage breaker cooldown. Exposed only so tests can shrink the wait to ~80ms;
