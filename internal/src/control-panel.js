@@ -15,6 +15,7 @@ export function openControlPanel(user, { onClose, onAudit, onChanged } = {}) {
     const role = select('系统角色', [{ value: '', label: '全部角色' }, { value: 'member', label: '普通成员' }, { value: 'admin', label: '系统管理员' }]);
     const state = select('账号状态', [{ value: 'current', label: '全部有效账号' }, { value: 'active', label: '已启用' }, { value: 'disabled', label: '已停用' }, { value: 'deleted', label: '回收站' }], 'current');
     const statistics = el('div', { className: 'control-stats', 'aria-label': '账号概况' });
+    const healthHost = el('div', { className: 'control-health', 'aria-label': '服务状态' });
     const list = el('div', { className: 'control-account-list', 'aria-label': '内部账号列表' });
     const inspector = el('section', { className: 'control-inspector', 'aria-label': '账号与权限设置' }, empty('选择一个账号', '在这里调整账号状态、系统角色和项目访问权限。'));
     const errors = el('div');
@@ -24,7 +25,7 @@ export function openControlPanel(user, { onClose, onAudit, onChanged } = {}) {
     const root = el('div', { className: 'control-root' },
         el('div', { className: 'control-intro' }, el('div', {}, el('div', { className: 'control-eyebrow', text: 'ADMINISTRATION' }), el('h3', { text: '账号与权限，一处管理。' }), el('p', { className: 'muted', text: '管理谁能登录，以及他们能进入哪些项目。' })),
             el('div', { className: 'actions' }, onAudit && button('只读审计', onAudit, { glyph: 'shield' }), button('新增账号', () => createAccount(), { className: 'button primary', glyph: 'plus' }))),
-        statistics, errors,
+        statistics, healthHost, errors,
         el('div', { className: 'control-layout' }, el('section', { className: 'control-directory' }, form, list, pagination), inspector));
     const view = panel('控制面板', root, { wide: true, subtitle: 'AI七嫂·员工专属版 · 仅系统管理员可用' });
     view.dialog.classList.add('control-dashboard');
@@ -32,6 +33,61 @@ export function openControlPanel(user, { onClose, onAudit, onChanged } = {}) {
     const connected = () => view.dialog.isConnected;
     const ignore = error => error.name === 'AbortError' || error.code === 'STALE_RESPONSE';
     const inspect = (...children) => inspector.replaceChildren(el('div', { className: 'control-inspector-content' }, ...children));
+
+    /**
+     * Read-only service summary (R4 / US-8): the answer mode, whether web search is
+     * configured, and the last storage error reported by the chat breaker.
+     *
+     * @param {Object} data `/api/health` payload.
+     * @returns {void}
+     */
+    function renderHealth(data) {
+        const breaker = data?.chat?.breaker || {};
+        const lastError = breaker.lastError;
+        healthHost.replaceChildren(...[
+            ['AI 回答模式', data?.grounding?.mode === 'strict' ? '严格核验' : '开放回答'],
+            ['联网搜索', data?.search?.enabled ? '已启用' : '未启用'],
+            ['最近存储错误', lastError ? (lastError.code || '未知错误') + (lastError.at ? ' · ' + formatDate(lastError.at) : '') : '无'],
+        ].map(([label, value]) => el('div', { className: 'control-health-row' },
+            el('span', { text: label }), el('strong', { text: value }))));
+    }
+
+    async function loadHealth() {
+        try {
+            const data = await api('/api/health');
+            if (connected()) renderHealth(data);
+        } catch (error) {
+            // A recovering service answers 503; that is exactly the state worth showing.
+            if (connected() && !ignore(error)) {
+                healthHost.replaceChildren(el('small', { className: 'muted', text: '服务状态暂时无法读取（服务可能正在恢复）。' }));
+            }
+        }
+    }
+
+    /** @returns {Object[]} Projects that may be granted from this panel. */
+    function grantableProjects() {
+        return projects.filter(item => item.shared && !item.archived);
+    }
+
+    /**
+     * Builds the 共享项目 checkbox group.
+     *
+     * @param {{checked?: string[], disabled?: boolean}} [options] Options.
+     * @returns {{wrapper: HTMLElement, selected: () => string[]}} Group handle.
+     */
+    function sharedProjectGrid({ checked = [], disabled = false } = {}) {
+        const entries = grantableProjects().map(item => {
+            const box = el('input', { type: 'checkbox', value: item.id, checked: checked.includes(item.id), disabled });
+            return { item, box };
+        });
+        const wrapper = el('div', { className: 'stack-tight' },
+            el('h4', { text: '共享项目' }),
+            el('div', { className: 'checkbox-grid' }, entries.length
+                ? entries.map(entry => el('label', { className: 'check-field' }, entry.box, el('span', { text: entry.item.name })))
+                : el('p', { className: 'muted', text: '还没有可共享的项目：先由项目管理员把项目标记为共享。' })),
+            el('small', { className: 'muted', text: '撤销勾选会立即失去该项目访问权限；授予后角色固定为项目成员。' }));
+        return { wrapper, selected: () => entries.filter(entry => entry.box.checked).map(entry => entry.item.id) };
+    }
 
     function renderStats(summary = {}) {
         statistics.replaceChildren(...[
@@ -104,13 +160,17 @@ export function openControlPanel(user, { onClose, onAudit, onChanged } = {}) {
         const active = el('input', { type: 'checkbox', checked: account.active, disabled: own });
         systemRole.control.disabled = own;
         const editorErrors = el('div');
+        // Checked when the account already has a membership; a project-admin membership stays
+        // checked and the backend never downgrades it.
+        const shared = sharedProjectGrid({ checked: (account.memberships || []).map(item => item.projectId), disabled: !account.active });
         const editor = el('form', { className: 'stack-tight' }, displayName.wrapper, systemRole.wrapper,
-            el('label', { className: 'check-field' }, active, el('span', { text: '允许此账号登录' })),
+            el('label', { className: 'check-field' }, active, el('span', { text: '允许此账号登录' })), shared.wrapper,
             el('small', { className: 'muted', text: own ? '当前账号的管理权限受保护，不能停用或撤销自己的系统管理员身份。' : '停用和角色变更会立即撤销该成员已有的登录会话。' }), editorErrors,
             button('保存账号设置', null, { type: 'submit', className: 'button primary' }));
         editor.addEventListener('submit', event => {
             event.preventDefault(); const started = editorOwner.capture(); submitting(editor, async () => {
-                await api('/api/admin/users/' + encodeURIComponent(account.id), { method: 'PATCH', body: { displayName: displayName.control.value.trim(), systemRole: systemRole.control.value, active: active.checked } });
+                await api('/api/admin/users/' + encodeURIComponent(account.id), { method: 'PATCH', body: { displayName: displayName.control.value.trim(),
+                    systemRole: systemRole.control.value, active: active.checked, ...(active.checked ? { sharedProjectIds: shared.selected() } : {}) } });
                 await changed('账号设置已保存。', account.id, started);
             }, editorErrors);
         });
@@ -165,13 +225,14 @@ export function openControlPanel(user, { onClose, onAudit, onChanged } = {}) {
         const name = input('显示名称', { required: true, maxlength: 80, placeholder: '成员姓名' });
         const password = input('初始密码', { type: 'password', required: true, minlength: 6, maxlength: 256, autocomplete: 'new-password', hint: '至少 6 位，可用纯数字；成员首次登录需修改。' });
         const newRole = select('系统角色', [{ value: 'member', label: '普通成员' }, { value: 'admin', label: '系统管理员' }]);
+        const shared = sharedProjectGrid();
         const messages = el('div');
-        const form = el('form', { className: 'stack' }, username.wrapper, name.wrapper, password.wrapper, newRole.wrapper,
+        const form = el('form', { className: 'stack' }, username.wrapper, name.wrapper, password.wrapper, newRole.wrapper, shared.wrapper,
             notice('普通成员管理自己的讨论与记忆；系统管理员还可管理账号、分配项目权限，并通过只读审计查看全局数据。'), messages,
             el('div', { className: 'actions' }, button('取消', () => { inspect(empty('选择一个账号', '从左侧选择成员，或继续添加账号。')); }), button('创建账号', null, { type: 'submit', className: 'button primary', glyph: 'plus' })));
         form.addEventListener('submit', event => {
             event.preventDefault(); const started = editorOwner.capture(); submitting(form, async () => {
-                const data = await api('/api/admin/users', { method: 'POST', body: { username: username.control.value.trim(), displayName: name.control.value.trim(), password: password.control.value, systemRole: newRole.control.value } });
+                const data = await api('/api/admin/users', { method: 'POST', body: { username: username.control.value.trim(), displayName: name.control.value.trim(), password: password.control.value, systemRole: newRole.control.value, sharedProjectIds: shared.selected() } });
                 password.control.value = '';
                 if (editorOwner.current(started)) { search.control.value = data.user.username; state.control.value = 'current'; role.control.value = ''; page = 1; }
                 await changed('账号已创建，可继续分配项目权限。', data.user.id, started);
@@ -214,6 +275,6 @@ export function openControlPanel(user, { onClose, onAudit, onChanged } = {}) {
     form.addEventListener('submit', event => { event.preventDefault(); applyFilters(); });
     role.control.addEventListener('change', applyFilters);
     state.control.addEventListener('change', applyFilters);
-    renderStats(); list.replaceChildren(empty('正在读取账号…')); load();
+    renderStats(); list.replaceChildren(empty('正在读取账号…')); load(); loadHealth();
     return view;
 }

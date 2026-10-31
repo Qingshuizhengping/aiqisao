@@ -387,3 +387,66 @@ test('the audit trail records share changes and grants without any conversation 
     assert.equal(dump.includes(secret), false, 'audit details never copy conversation or project text');
     assert.equal(dump.includes('168'), false);
 });
+
+// ---------------------------------------------------------------- frontend contract
+
+test('the shared-project panel, sidebar entry, account form and settings rows are wired up', async () => {
+    const fs = await import('node:fs');
+    const path = await import('node:path');
+    const { fileURLToPath } = await import('node:url');
+    const root = fileURLToPath(new URL('../', import.meta.url));
+    const read = name => fs.readFileSync(path.join(root, name), 'utf8');
+
+    // 1) Panel module: discovery list with role/archive badges and a click-through.
+    const panelSource = read('src/shared-projects.js');
+    const panel = await import('../src/shared-projects.js');
+    assert.equal(typeof panel.openSharedProjectsPanel, 'function');
+    assert.match(panelSource, /api\('\/api\/projects\/shared'\)/);
+    assert.match(panelSource, /className: 'shared-project-row'/);
+    assert.match(panelSource, /项目管理员/);
+    assert.match(panelSource, /badge\('只读', 'warning'\)/);
+    assert.match(panelSource, /view\.close\(\);\s*onSelect\?\.\(item\)/);
+    assert.match(panelSource, /还没有共享项目/);
+    assert.match(panelSource, /panel\('共享项目'/);
+
+    // 2) Sidebar entry next to the other member entries, plus the current-project highlight.
+    const app = read('src/app.js');
+    assert.match(app, /import \{ openSharedProjectsPanel \} from '\.\/shared-projects\.js';/);
+    assert.match(app, /button\('共享项目', \(\) => openSharedProjects\(\), \{ className: 'nav-item shared-projects-entry', glyph: 'folder' \}\)/);
+    assert.match(app, /function openSharedProjects\(\) \{\s*openSharedProjectsPanel\(\{ currentProjectId: project\?\.id \|\| null, onSelect: value => \{/);
+    assert.match(app, /querySelector\('\.shared-projects-entry'\)/);
+    assert.match(app, /projects\.find\(item => item\.id === project\.id\)\?\.shared/);
+
+    // 3) Control panel: grantable list, both forms submit sharedProjectIds, read-only health rows.
+    const control = read('src/control-panel.js');
+    assert.match(control, /projects\.filter\(item => item\.shared && !item\.archived\)/);
+    assert.match(control, /className: 'checkbox-grid'/);
+    assert.match(control, /撤销勾选会立即失去该项目访问权限/);
+    assert.match(control, /sharedProjectIds: shared\.selected\(\)/, 'the create form submits grants');
+    assert.match(control, /\.\.\.\(active\.checked \? \{ sharedProjectIds: shared\.selected\(\) \} : \{\}\)/, 'the edit form submits grants only for active accounts');
+    assert.match(control, /\(account\.memberships \|\| \[\]\)\.map\(item => item\.projectId\)/, 'checked state comes from memberships');
+    for (const field of ['data?.grounding?.mode', 'data?.search?.enabled', 'data?.chat?.breaker']) {
+        assert.ok(control.includes(field), 'health row must read ' + field);
+    }
+    assert.match(control, /最近存储错误/);
+    assert.match(control, /loadHealth\(\)/);
+
+    // 4) A member sees no settings form, no member manager and no archive entry.
+    const projects = read('src/projects.js');
+    assert.match(projects, /const settings = canManage/);
+    assert.match(projects, /if \(canManage\) loadMembers\(\)/);
+    assert.match(projects, /项目设置、成员与归档由项目管理员管理/);
+    assert.match(projects, /badge\('共享', 'shared-badge'\)/);
+
+    // 5) Styles: every new class exists, colours come from variables, touch targets and
+    //    reduced-motion rules are present.
+    const css = read('src/studio.css');
+    for (const selector of ['.shared-project-row', '.shared-project-identity', '.checkbox-grid', '.control-health', '.shared-badge']) {
+        assert.ok(css.includes(selector), 'missing style: ' + selector);
+    }
+    assert.match(css, /\.shared-project-row \{ display: flex; align-items: center; gap: 12px; width: 100%; min-height: 60px/);
+    assert.match(css, /@media \(max-width: 720px\) \{[\s\S]*\.checkbox-grid \.check-field \{ min-height: 44px; \}/);
+    assert.match(css, /@media \(prefers-reduced-motion: reduce\)/);
+    const newStyles = css.slice(css.indexOf('.shared-project-list'));
+    assert.doesNotMatch(newStyles.replace(/rgba\([^)]*\)/g, ''), /#[0-9a-fA-F]{3,8}\b/, 'no hard coded hex colours');
+});

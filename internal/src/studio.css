@@ -445,3 +445,37 @@ a.evidence-title:hover { text-decoration: underline; }
     .evidence-row .evidence-chip { min-height: 44px; }
     .evidence-item { align-items: flex-start; }
 }
+
+/* R4 共享项目面板 + 控制面板的共享授权复选框组：全部复用既有主题变量。 */
+.shared-project-list { gap: 8px; }
+.shared-project-row { display: flex; align-items: center; gap: 12px; width: 100%; min-height: 60px; padding: 12px 14px;
+    border: 1px solid var(--line); border-radius: 14px; background: var(--surface); color: var(--ink);
+    text-align: left; cursor: pointer; transition: border-color .16s, background .16s, transform .16s; }
+.shared-project-row:hover { border-color: rgba(74, 103, 65, .23); background: var(--accent-soft); }
+.shared-project-row:active { transform: scale(.99); }
+.shared-project-row.current { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-soft); }
+.shared-project-row > svg { flex-shrink: 0; color: var(--accent); opacity: .85; }
+.shared-project-identity { display: flex; flex-direction: column; gap: 3px; min-width: 0; flex: 1; }
+.shared-project-identity strong { font-size: 13px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.shared-project-identity small { font-size: 11px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.shared-badge { letter-spacing: .3px; }
+
+.checkbox-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 4px 14px; padding: 4px 0; }
+.checkbox-grid .check-field { min-height: 38px; font-size: 12px; }
+.checkbox-grid .check-field input { width: 16px; height: 16px; }
+
+.control-health { display: flex; flex-wrap: wrap; gap: 8px 18px; padding: 11px 15px; border: 1px solid var(--line);
+    border-radius: 14px; background: var(--surface); }
+.control-health-row { display: flex; align-items: baseline; gap: 7px; font-size: 11px; color: var(--muted); }
+.control-health-row strong { font-size: 12px; font-weight: 600; color: var(--secondary); }
+
+@media (max-width: 720px) {
+    .shared-project-row { min-height: 64px; }
+    .checkbox-grid { grid-template-columns: 1fr; }
+    .checkbox-grid .check-field { min-height: 44px; }
+    .control-health { flex-direction: column; gap: 4px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .shared-project-row { transition: none !important; }
+}

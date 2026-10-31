@@ -34,10 +34,12 @@ export function openProjectPanel({ user, project, onChanged }) {
     const memberFormHost = el('div');
     const form = el('form', { className: 'stack' }, name.wrapper, description.wrapper, instructions.wrapper,
         writable && button('保存项目信息', null, { type: 'submit', className: 'button primary' }), errors);
-    const view = panel('项目空间', el('div', { className: 'stack' }, el('div', { className: 'row-between' }, el('div', {}, el('h3', { text: project.name }), el('small', { text: '你在此项目的角色：' + (canManage ? '项目管理员' : '成员') })), project.archived && badge('已归档')),
-        notice(project.archived ? '此项目已归档，聊天、项目信息和共享记忆保持只读。' : '项目成员各自的聊天互不可见；项目管理员可查看本项目全部聊天，系统管理员可全局审计。'),
-        form, el('div', { className: 'divider' }), el('h3', { text: '项目成员' }), memberErrors, members, memberFormHost,
-        canManage && el('div', { className: 'stack-tight' }, el('div', { className: 'divider' }), button(project.archived ? '恢复项目' : '归档项目', async () => {
+    // R4-04: a member (or an administrator reading a shared project they do not administer)
+    // never gets the settings form, the member manager or the archive entry — those stay with
+    // the project administrator. The backend enforces the same rule.
+    const settings = canManage
+        ? el('div', { className: 'stack' }, form, el('div', { className: 'divider' }), el('h3', { text: '项目成员' }), memberErrors, members, memberFormHost,
+            el('div', { className: 'stack-tight' }, el('div', { className: 'divider' }), button(project.archived ? '恢复项目' : '归档项目', async () => {
             const accepted = await confirmAction(project.archived ? '恢复这个项目？' : '归档这个项目？', project.archived ? '恢复后，成员可以继续发起讨论和更新项目内容。' : '归档后项目保持只读，不会删除已有聊天和记忆。', project.archived ? '恢复项目' : '归档项目');
             if (!accepted) { openProjectPanel({ user, project, onChanged }); return; }
             try {
@@ -45,7 +47,15 @@ export function openProjectPanel({ user, project, onChanged }) {
                 await onChanged(data.project);
                 toast(project.archived ? '项目已恢复。' : '项目已归档。');
             } catch (error) { toast(error.message, 'error'); }
-        }, { glyph: 'archive', className: 'button quiet' }))), { subtitle: '背景与指令只影响当前项目。' });
+            }, { glyph: 'archive', className: 'button quiet' })))
+        : el('div', { className: 'stack-tight' }, el('div', { className: 'divider' }),
+            notice('项目设置、成员与归档由项目管理员管理。你可以直接在这里发起讨论、查看自己的历史。'));
+    const view = panel('项目空间', el('div', { className: 'stack' },
+        el('div', { className: 'row-between' }, el('div', {}, el('h3', { text: project.name }),
+            el('small', { text: '你在此项目的角色：' + (canManage ? '项目管理员' : '成员') })),
+            el('div', { className: 'row' }, project.shared && badge('共享', 'shared-badge'), project.archived && badge('已归档'))),
+        notice(project.archived ? '此项目已归档，聊天、项目信息和共享记忆保持只读。' : '项目成员各自的聊天互不可见；项目管理员可查看本项目全部聊天，系统管理员可全局审计。'),
+        settings), { subtitle: '背景与指令只影响当前项目。' });
     form.addEventListener('submit', event => {
         event.preventDefault();
         submitting(form, async () => {
@@ -108,5 +118,5 @@ export function openProjectPanel({ user, project, onChanged }) {
             if (view.dialog.isConnected && error.code !== 'STALE_RESPONSE') members.replaceChildren(notice(error.message, 'error'), button('重试读取成员', loadMembers));
         }
     }
-    loadMembers();
+    if (canManage) loadMembers();
 }
