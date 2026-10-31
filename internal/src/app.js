@@ -2,6 +2,7 @@ import { api, setSession, getSession, onUnauthorized, onSetupRequired } from './
 import { loginScreen, passwordScreen, accountPanel } from './account.js';
 import { createProjectPanel, openProjectPanel } from './projects.js';
 import { openMemoryPanel } from './memories.js';
+import { openImagesPanel } from './images.js';
 import { openAuditPanel } from './admin.js';
 import { openControlPanel } from './control-panel.js';
 import { createChatView, clearDrafts, activateDraftOwner, followRun, drafts } from './chat.js';
@@ -160,6 +161,10 @@ function projectInformation() {
     openProjectPanel({ user, project, onChanged: () => projectChanged(started) });
 }
 
+function openImages() {
+    openImagesPanel();
+}
+
 function openMemories(memory) {
     openMemoryPanel({ user, project, conversationId: conversation?.id,
         initialScope: memory?.scope, focusId: memory?.id,
@@ -187,7 +192,7 @@ function buildShell() {
         el('div', { className: 'sidebar-brand-row' }, el('img', { className: 'brand-avatar', src: '/static/img/avatar-192.png', alt: 'AI七嫂·员工专属版' }),
             el('div', { className: 'brand-wordmark' }, el('strong', { text: 'AI七嫂·员工专属版' }), el('small', { text: '薇之雨 · 内部工作空间' })), button('', closeSidebar, { className: 'icon-button sidebar-mobile-close', glyph: 'close', name: '关闭导航' })),
         button('开启新讨论', () => newConversation(), { className: 'button sidebar-new', glyph: 'plus' }),
-        el('nav', { className: 'sidebar-nav' }, button('个人空间', () => selectProject(null), { className: 'nav-item personal-space', glyph: 'chat' }), button('记忆库', () => openMemories(), { className: 'nav-item', glyph: 'memory' })),
+        el('nav', { className: 'sidebar-nav' }, button('个人空间', () => selectProject(null), { className: 'nav-item personal-space', glyph: 'chat' }), button('记忆库', () => openMemories(), { className: 'nav-item', glyph: 'memory' }), button('素材生成', () => openImages(), { className: 'nav-item', glyph: 'spark' })),
         el('section', { className: 'sidebar-section' }, el('div', { className: 'section-label row-between' }, el('span', { text: '项目空间' }), button('', createProject, { className: 'icon-button small', glyph: 'plus', name: '创建项目空间' })), projectList),
         el('section', { className: 'sidebar-section grow' }, el('div', { className: 'section-label', text: '最近讨论' }), conversationList),
             el('footer', { className: 'sidebar-footer' }, user.systemRole === 'admin' && el('div', { className: 'sidebar-nav' }, button('控制面板', controlPanel, { className: 'nav-item', glyph: 'settings' }), button('全局只读审计', () => openAuditPanel(), { className: 'nav-item', glyph: 'shield' })),

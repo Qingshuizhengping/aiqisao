@@ -533,3 +533,42 @@ test('the job view reports elapsed time and the download name uses the preset, n
     assert.equal(downloadName({ size_key: '16:9', created_at: Date.UTC(2026, 9, 31, 7, 30), file_name: 'a.png' }).startsWith('素材-16比9-'), true);
     assert.equal(downloadName({ size_key: 'auto', created_at: Date.UTC(2026, 9, 31), file_name: 'x/a.webp' }).endsWith('.webp'), true);
 });
+
+// ---------------------------------------------------------------- frontend contract
+
+test('the panel wiring matches the agreed constants and the sidebar entry exists', async () => {
+    const panel = await import('../src/images.js');
+    assert.equal(panel.POLL_MS, 2000, 'polling interval');
+    assert.equal(panel.HISTORY_PAGE, 12, 'first history screen');
+    assert.deepEqual(panel.TEMPLATES.map(template => template.label),
+        ['产品平铺', '海报竖版', '贴片背景', '门店场景', '人物氛围']);
+    for (const template of panel.TEMPLATES) assert.ok(template.prompt.length > 10, template.key);
+    // Every backend error code has a frontend text, so a notice never falls back to raw output.
+    for (const code of ['IMAGE_UPSTREAM_QUOTA', 'IMAGE_UPSTREAM_AUTH', 'IMAGE_CONTENT_BLOCKED', 'IMAGE_UPSTREAM_BUSY',
+        'IMAGE_UPSTREAM_ERROR', 'IMAGE_RESULT_UNKNOWN', 'IMAGE_JOB_INTERRUPTED', 'IMAGE_JOB_CANCELLED',
+        'IMAGE_RATE_LIMITED', 'IMAGE_QUEUE_FULL', 'IMAGE_NOT_CONFIGURED', 'INVALID_IMAGE_INPUT',
+        'IMAGE_REQUEST_ID_CONFLICT', 'IMAGE_NOT_READY', 'IMAGE_FILE_MISSING', 'IMAGE_JOB_NOT_FOUND']) {
+        assert.equal(typeof panel.ERROR_TEXT[code], 'string', 'missing text for ' + code);
+    }
+    assert.equal(panel.errorText('IMAGE_UPSTREAM_QUOTA'), '生图服务额度未开通，请联系管理员');
+    assert.equal(panel.errorText('UNKNOWN_CODE', '后端文案'), '后端文案');
+    assert.equal(panel.errorText('UNKNOWN_CODE'), '生成没有完成，请稍后重试。');
+
+    const app = fs.readFileSync(path.join(root, 'src/app.js'), 'utf8');
+    assert.match(app, /import \{ openImagesPanel \} from '\.\/images\.js';/);
+    assert.match(app, /button\('素材生成', \(\) => openImages\(\), \{ className: 'nav-item', glyph: 'spark' \}\)/);
+    assert.match(app, /function openImages\(\) \{\s*openImagesPanel\(\);/);
+
+    // The stylesheet is bundled as one file, and images.css must come after the theme tokens.
+    const style = fs.readFileSync(path.join(root, 'src/style.css'), 'utf8');
+    assert.deepEqual(style.trim().split('\n'), ["@import './base.css';", "@import './studio.css';",
+        "@import './images.css';", "@import './control-panel.css';", "@import './grounding.css';"]);
+    const css = fs.readFileSync(path.join(root, 'src/images.css'), 'utf8');
+    assert.match(css, /\.image-grid \{ display: grid; grid-template-columns: repeat\(3, minmax\(0, 1fr\)\)/);
+    assert.match(css, /@media \(max-width: 720px\) \{[\s\S]*repeat\(2, minmax\(0, 1fr\)\)/);
+    assert.match(css, /min-height: 44px/, 'mobile touch targets');
+    assert.match(css, /@media \(prefers-reduced-motion: reduce\)/);
+    assert.doesNotMatch(css.replace(/rgba\([^)]*\)/g, ''), /#[0-9a-fA-F]{3,8}\b/, 'no hard coded hex colours');
+    // The service worker cache list is intentionally untouched (assets/style.css is a single bundle).
+    assert.match(fs.readFileSync(path.join(root, 'public/sw.js'), 'utf8'), /assets\/style\.css/);
+});
