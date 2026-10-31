@@ -263,3 +263,31 @@ test('an existing database is migrated in place by adding the search preference 
         fs.rmSync(directory, { recursive: true, force: true });
     }
 });
+
+test('a project administrator reading another member answer cannot see its network sources', async context => {
+    const fetchImpl = transport({ results: [{ title: '门店运营手册', url: 'https://example.com/materials/store', snippet: '片段' }] });
+    const f = await fixture(context, { config: searchConfig(), fetchImpl });
+    const manager = f.employee('search_scope_manager');
+    const member = f.employee('search_scope_member');
+    const project = (await manager.call('POST', '/api/projects', { name: 'Search scoping' })).body.project;
+    assert.equal((await manager.call('PUT', '/api/projects/' + project.id + '/members/' + member.id, { role: 'member' })).status, 200);
+    const conversation = await f.conversation(member, project.id);
+    const created = await member.call('POST', '/api/chat/runs', { conversationId: conversation.id, message: '门店这周怎么排班？', requestId: randomUUID() });
+    assert.equal(created.status, 202, JSON.stringify(created.body));
+    const owner = await eventually(async () => {
+        const response = await member.call('GET', '/api/chat/runs/' + created.body.run.id);
+        return response.status === 200 && response.body.run.state === 'completed' ? response.body : null;
+    }, 8000);
+    assert.equal(owner.message.metadata.search.status, 'ok');
+    assert.equal(owner.message.metadata.search.items.length, 1);
+
+    // The administrator keeps the local (shared) source metadata, but the web sources — which
+    // belong to the member who asked — are stripped on both read paths.
+    for (const route of ['/api/chat/runs/' + created.body.run.id, '/api/conversations/' + conversation.id]) {
+        const response = await manager.call('GET', route);
+        const message = response.body.message || response.body.messages.find(item => item.role === 'assistant');
+        assert.deepEqual(message.metadata.search, { status: 'filtered', count: 0, items: [] });
+        assert.doesNotMatch(JSON.stringify(message.metadata), /example\.com/);
+        assert.equal(evidenceSummary(message.metadata).network.count, 0);
+    }
+});

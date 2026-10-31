@@ -45,6 +45,12 @@ export function createChatDomain({ db, config, memory, knowledge, grounding, sea
         const metadata = { ...message.metadata };
         if (Array.isArray(metadata.memories)) metadata.memories = metadata.memories.filter(entry => entry.scope === 'project_shared');
         if (Array.isArray(metadata.files)) metadata.files = metadata.files.filter(entry => entry.scope === 'project_shared');
+        // Network sources belong to the member who asked. There is no "shared network source"
+        // concept, so a project administrator reading someone else's answer sees the fact that
+        // a search happened, but none of the retrieved items.
+        if (metadata.search && typeof metadata.search === 'object') {
+            metadata.search = { status: 'filtered', count: 0, items: [] };
+        }
         if (metadata.grounding) {
             const value = metadata.grounding;
             const citations = (value.citations || []).filter(entry => entry.scope === 'project_shared');
