@@ -13,9 +13,12 @@ export async function fixture(context, options = {}) {
         bootstrapPassword: 'InitialPassword2026!', chatModel: 'mock-chat', memoryModel: 'mock-memory',
         embeddingModel: 'mock-embed', apiKey: 'mock-key', chatConcurrency: 2, chatQueueCapacity: 32,
         contextCharacters: 48000, memoryContextCharacters: 9000,
-        // These long-standing fixtures test the transport/queue contract. Strict
-        // answer tests opt in explicitly and use confirmed-source fixtures.
-        strictGrounding: false, ...options.config };
+        // These long-standing fixtures exercise the open-answer / transport contract.
+        // Strict answer tests opt in explicitly ('groundingMode: strict') and use
+        // confirmed-source fixtures.
+        groundingMode: 'free',
+        // Keep the storage breaker cooldown tiny so recovery tests finish in milliseconds.
+        chatBreakerCooldownMs: 80, ...options.config };
     const calls = [];
     const extraction = [];
     const provider = { async *chat(messages, args) { calls.push(messages); yield '**测试**\n\n正常回答。'; },

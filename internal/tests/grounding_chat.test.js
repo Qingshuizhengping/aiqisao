@@ -5,7 +5,7 @@ import { fixture, eventually, gate, waitOrAbort } from './helpers/application.js
 
 async function setup(context, options = {}) {
     const counts = { draft: 0, verify: 0 };
-    const application = await fixture(context, { config: { strictGrounding: true, ...options.config }, provider: {
+    const application = await fixture(context, { config: { groundingMode: 'strict', ...options.config }, provider: {
         async draftGrounded(input, args) {
             counts.draft++;
             if (options.draft) return options.draft(input, args);
@@ -47,8 +47,8 @@ async function setup(context, options = {}) {
     return { ...application, counts, memory, confirm, fact, send, finished };
 }
 
-test('normal application defaults to strict evidence gates and unconfirmed history never becomes an answer', async context => {
-    const f = await setup(context, { config: { strictGrounding: undefined } });
+test('explicit strict mode gates unconfirmed history and never turns it into an answer', async context => {
+    const f = await setup(context, { config: { groundingMode: 'strict' } });
     const person = f.employee('strict_default'), conversation = await f.conversation(person);
     await f.memory(person, '青禾精华价格168元/瓶。');
     const run = await f.send(person, conversation, '青禾精华多少钱？');

@@ -29,10 +29,14 @@ export function createApplication({ config, database, provider: suppliedProvider
     const groundingLibrary = createGroundingLibrary({ db, provider });
     const groundingRetrieval = createGroundingRetrieval({ db, config, provider, library: groundingLibrary });
     const grounding = createGroundedAnswerService({ db, provider, library: groundingLibrary, retrieval: groundingRetrieval });
-    // Legacy transport fixtures can exercise the unchanged streaming contract;
-    // normal runtime configuration always enables the evidence gate.
-    const strictGrounding = config.strictGrounding !== false || !suppliedProvider;
-    const chat = createChatService({ db, config, provider, memory, knowledge, grounding: strictGrounding ? grounding : null });
+    // H3: exactly one source of truth decides the answer pipeline. We deliberately do
+    // not look at whether a provider was injected: that used to silently flip the mode
+    // for transport fixtures, which is how a test suite can stay green while running
+    // the wrong branch. Invalid values are rejected by createConfig(); hand-built
+    // configs fall back to the documented default 'free'.
+    const groundingMode = config.groundingMode === undefined || config.groundingMode === null ? 'free' : config.groundingMode;
+    if (groundingMode !== 'free' && groundingMode !== 'strict') throw new Error('INTERNAL_GROUNDING_MODE must be strict or free');
+    const chat = createChatService({ db, config, provider, memory, knowledge, grounding: groundingMode === 'strict' ? grounding : null });
     const app = express();
     let ready = false;
     let started = false;
@@ -51,7 +55,7 @@ export function createApplication({ config, database, provider: suppliedProvider
         const state = chat.health();
         response.status(ready && state.ready ? 200 : 503).json({ status: ready && state.ready ? 'ok' : 'recovering',
             version: VERSION, chatReady: ready && state.ready, memory: memory.health(), knowledge: knowledge.health(),
-            grounding: { mode: strictGrounding ? 'strict' : 'transport-fixture', ready }, modelConfigured: Boolean(config.apiKey) });
+            grounding: { mode: groundingMode, ready }, modelConfigured: Boolean(config.apiKey) });
     });
     app.use('/api', auth.guardOrigin);
     app.use('/api/auth', auth.router);
